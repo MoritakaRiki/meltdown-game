@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Crown, Shield, Zap, Target, Terminal, AlertTriangle, Activity, Lock, Settings, HelpCircle, X, Flame, Crosshair } from 'lucide-react';
+import { Crown, Shield, Zap, Target, Terminal, AlertTriangle, Activity, Lock, Settings, HelpCircle, X, Flame, Crosshair, Eye } from 'lucide-react';
 
 const BOARD_SIZE = 9;
 
 // ★ 公開時にMP3ファイルを使う場合は、ここを true に変更してください ★
-// true にすると、publicフォルダ内の Surviving_Cyber.mp3 が再生されます。
 const USE_MP3_BGM = true;
 
 const WALLS = [
@@ -16,6 +15,7 @@ const WALLS = [
 const INITIAL_UNITS = [
   // Player Units
   { id: 'p_core', owner: 'player', type: 'core', x: 4, y: 8, hp: 4, maxHp: 4, heat: 0, maxHeat: 2, hasActed: false, icon: Crown, label: 'Core' },
+  { id: 'p_hacker', owner: 'player', type: 'hacker', x: 4, y: 7, hp: 1, maxHp: 1, heat: 0, maxHeat: 2, hasActed: false, icon: Eye, label: 'Hacker' },
   { id: 'p_heavy1', owner: 'player', type: 'heavy', x: 3, y: 8, hp: 2, maxHp: 2, heat: 0, maxHeat: 1, hasActed: false, icon: Shield, label: 'Heavy' },
   { id: 'p_heavy2', owner: 'player', type: 'heavy', x: 5, y: 8, hp: 2, maxHp: 2, heat: 0, maxHeat: 1, hasActed: false, icon: Shield, label: 'Heavy' },
   { id: 'p_sniper1', owner: 'player', type: 'sniper', x: 2, y: 8, hp: 1, maxHp: 1, heat: 0, maxHeat: 2, hasActed: false, icon: Target, label: 'Sniper' },
@@ -25,6 +25,7 @@ const INITIAL_UNITS = [
   
   // CPU Units
   { id: 'c_core', owner: 'cpu', type: 'core', x: 4, y: 0, hp: 4, maxHp: 4, heat: 0, maxHeat: 2, hasActed: false, icon: Crown, label: 'Core' },
+  { id: 'c_hacker', owner: 'cpu', type: 'hacker', x: 4, y: 1, hp: 1, maxHp: 1, heat: 0, maxHeat: 2, hasActed: false, icon: Eye, label: 'Hacker' },
   { id: 'c_heavy1', owner: 'cpu', type: 'heavy', x: 3, y: 0, hp: 2, maxHp: 2, heat: 0, maxHeat: 1, hasActed: false, icon: Shield, label: 'Heavy' },
   { id: 'c_heavy2', owner: 'cpu', type: 'heavy', x: 5, y: 0, hp: 2, maxHp: 2, heat: 0, maxHeat: 1, hasActed: false, icon: Shield, label: 'Heavy' },
   { id: 'c_sniper1', owner: 'cpu', type: 'sniper', x: 2, y: 0, hp: 1, maxHp: 1, heat: 0, maxHeat: 2, hasActed: false, icon: Target, label: 'Sniper' },
@@ -33,15 +34,19 @@ const INITIAL_UNITS = [
   { id: 'c_speed2', owner: 'cpu', type: 'speed', x: 5, y: 1, hp: 1, maxHp: 1, heat: 0, maxHeat: 3, hasActed: false, icon: Zap, label: 'Speed' },
 ];
 
-export default function MeltdownTactics() {
+export default function App() {
   const [gameState, setGameState] = useState('title'); 
+  const [cpuLevel, setCpuLevel] = useState(3); // 1: Easy, 2: Normal, 3: Hard
   const [cutinText, setCutinText] = useState("");
   
   const [units, setUnits] = useState(INITIAL_UNITS.map(u => ({...u}))); 
   const [turn, setTurn] = useState(null); 
   const [turnCount, setTurnCount] = useState(1);
   const [selectedId, setSelectedId] = useState(null);
-  const [logs, setLogs] = useState(["SYSTEM_START: AWAITING INITIALIZATION..."]);
+  
+  // ログをオブジェクト配列に変更（アイコン対応）
+  const [logs, setLogs] = useState([{ id: 'init', text: "SYSTEM_START: AWAITING INITIALIZATION...", type: 'system', icon: null, iconColor: '' }]);
+  
   const [winner, setWinner] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -61,9 +66,15 @@ export default function MeltdownTactics() {
 
   const [vfx, setVfx] = useState([]);
 
-  const addLog = useCallback((msg) => {
-    setLogs(prev => [`[T${turnCount}] ${msg}`, ...prev]);
-  }, [turnCount]);
+  // --- LOGGING SYSTEM ---
+  const addLog = useCallback((msg, type = 'system', icon = null, iconColor = '') => {
+    setLogs(prev => [{ id: Date.now() + Math.random(), text: msg, type, icon, iconColor }, ...prev]);
+  }, []);
+
+  const addLogs = useCallback((logArray) => {
+    const newEntries = logArray.map((l, i) => ({ id: Date.now() + i, text: l.text, type: l.type, icon: l.icon, iconColor: l.iconColor }));
+    setLogs(prev => [...newEntries, ...prev]);
+  }, []);
 
   // --- AUDIO ENGINE ---
   useEffect(() => {
@@ -94,33 +105,10 @@ export default function MeltdownTactics() {
     const E1 = 41.20, F1 = 43.65, G1 = 48.99, A1 = 55.00, C2 = 65.41, D2 = 73.42, E2 = 82.41, F2 = 87.31, G2 = 98.00;
     const A2 = 110.0, C3 = 130.8, D3 = 146.8, E3 = 164.8, F3 = 174.61, G3 = 196.0, A3 = 220.0;
 
-    const kickPattern = [
-      1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0,
-      1,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0,
-      1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0,
-      1,0,0,0, 0,0,1,0, 0,0,0,0, 1,0,1,0
-    ];
-    
-    const hatPattern = [
-      0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,1,
-      0,0,1,0, 0,0,1,0, 0,0,1,0, 0,1,0,1,
-      0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,1,
-      0,0,1,0, 0,0,1,0, 0,1,1,0, 1,1,1,1
-    ];
-
-    const bassPattern = [
-      A1, 0, 0, 0, A1, 0, G1, 0,  A1, 0, 0, 0, C2, 0, E1, 0,
-      F1, 0, 0, 0, F1, 0, G1, 0,  F1, 0, 0, 0, E1, 0, C2, 0,
-      D2, 0, 0, 0, D2, 0, C2, 0,  D2, 0, 0, 0, F2, 0, E2, 0,
-      A1, 0, 0, 0, C2, 0, D2, 0,  E2, 0, 0, 0, G2, 0, 0, 0
-    ];
-
-    const arpPattern = [
-      A2, 0, 0, C3, 0, E3, 0, 0,  G3, 0, 0, D3, 0, 0, E3, 0,
-      0, A3, 0, 0, G3, 0, 0, C3,  0, E3, 0, 0, A2, 0, 0, 0,
-      D3, 0, 0, F3, 0, A3, 0, 0,  C3, 0, 0, E3, 0, 0, G3, 0,
-      A3, 0, 0, 0, E3, 0, 0, C3,  D3, 0, 0, A2, 0, 0, 0, 0
-    ];
+    const kickPattern = [1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,1,0, 0,0,0,0, 1,0,1,0];
+    const hatPattern = [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,1, 0,0,1,0, 0,0,1,0, 0,0,1,0, 0,1,0,1, 0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,1, 0,0,1,0, 0,0,1,0, 0,1,1,0, 1,1,1,1];
+    const bassPattern = [A1, 0, 0, 0, A1, 0, G1, 0, A1, 0, 0, 0, C2, 0, E1, 0, F1, 0, 0, 0, F1, 0, G1, 0, F1, 0, 0, 0, E1, 0, C2, 0, D2, 0, 0, 0, D2, 0, C2, 0, D2, 0, 0, 0, F2, 0, E2, 0, A1, 0, 0, 0, C2, 0, D2, 0, E2, 0, 0, 0, G2, 0, 0, 0];
+    const arpPattern = [A2, 0, 0, C3, 0, E3, 0, 0, G3, 0, 0, D3, 0, 0, E3, 0, 0, A3, 0, 0, G3, 0, 0, C3, 0, E3, 0, 0, A2, 0, 0, 0, D3, 0, 0, F3, 0, A3, 0, 0, C3, 0, 0, E3, 0, 0, G3, 0, A3, 0, 0, 0, E3, 0, 0, C3, D3, 0, 0, A2, 0, 0, 0, 0];
 
     synthIntervalRef.current = setInterval(() => {
       const now = ctx.currentTime;
@@ -131,13 +119,10 @@ export default function MeltdownTactics() {
       if (kickPattern[s]) {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(120, now);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = 'sine'; osc.frequency.setValueAtTime(120, now);
         osc.frequency.exponentialRampToValueAtTime(0.01, now + 0.3);
-        gain.gain.setValueAtTime(vol * 0.5, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        gain.gain.setValueAtTime(vol * 0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
         osc.start(now); osc.stop(now + 0.3);
       }
 
@@ -145,49 +130,32 @@ export default function MeltdownTactics() {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         const filter = ctx.createBiquadFilter();
-        filter.type = 'highpass';
-        filter.frequency.value = 7000;
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = 'square';
-        osc.frequency.value = 8000;
-        gain.gain.setValueAtTime(vol * 0.03, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+        filter.type = 'highpass'; filter.frequency.value = 7000;
+        osc.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+        osc.type = 'square'; osc.frequency.value = 8000;
+        gain.gain.setValueAtTime(vol * 0.03, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
         osc.start(now); osc.stop(now + 0.05);
       }
 
       if (bassPattern[s] > 0) {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = 'triangle'; 
-        osc.frequency.setValueAtTime(bassPattern[s], now);
-        
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = 'triangle'; osc.frequency.setValueAtTime(bassPattern[s], now);
         const filter = ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(800, now);
+        filter.type = 'lowpass'; filter.frequency.setValueAtTime(800, now);
         filter.frequency.exponentialRampToValueAtTime(200, now + 0.2); 
-        osc.disconnect();
-        osc.connect(filter);
-        filter.connect(gain);
-
-        gain.gain.setValueAtTime(vol * 0.3, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.disconnect(); osc.connect(filter); filter.connect(gain);
+        gain.gain.setValueAtTime(vol * 0.3, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
         osc.start(now); osc.stop(now + 0.3);
       }
 
       if (arpPattern[s] > 0) {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = 'sine'; 
-        osc.frequency.setValueAtTime(arpPattern[s], now);
-        
-        gain.gain.setValueAtTime(vol * 0.15, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.8); 
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = 'sine'; osc.frequency.setValueAtTime(arpPattern[s], now);
+        gain.gain.setValueAtTime(vol * 0.15, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.8); 
         osc.start(now); osc.stop(now + 0.8);
       }
 
@@ -203,74 +171,52 @@ export default function MeltdownTactics() {
 
     const osc = ctx.createOscillator();
     const gainNode = ctx.createGain();
-    osc.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    osc.connect(gainNode); gainNode.connect(ctx.destination);
     const now = ctx.currentTime;
     
     if (type === 'move') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(600, now);
+      osc.type = 'sine'; osc.frequency.setValueAtTime(600, now);
       osc.frequency.exponentialRampToValueAtTime(300, now + 0.1);
-      gainNode.gain.setValueAtTime(vol * 0.3, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      gainNode.gain.setValueAtTime(vol * 0.3, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
       osc.start(now); osc.stop(now + 0.1);
     } 
     else if (type === 'cooling') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, now);
+      osc.type = 'sine'; osc.frequency.setValueAtTime(800, now);
       osc.frequency.exponentialRampToValueAtTime(200, now + 0.3);
-      gainNode.gain.setValueAtTime(vol * 0.2, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      gainNode.gain.setValueAtTime(vol * 0.2, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
       osc.start(now); osc.stop(now + 0.3);
     }
     else if (type === 'attack') {
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(150, now);
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, now);
       osc.frequency.exponentialRampToValueAtTime(50, now + 0.2);
-      gainNode.gain.setValueAtTime(vol * 0.5, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+      gainNode.gain.setValueAtTime(vol * 0.5, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
       osc.start(now); osc.stop(now + 0.2);
     }
     else if (type === 'sniper') {
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(1200, now);
+      osc.type = 'square'; osc.frequency.setValueAtTime(1200, now);
       osc.frequency.exponentialRampToValueAtTime(400, now + 0.15);
-      gainNode.gain.setValueAtTime(vol * 0.4, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      gainNode.gain.setValueAtTime(vol * 0.4, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
       osc.start(now); osc.stop(now + 0.15);
     }
     else if (type === 'explosion') {
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(100, now);
+      osc.type = 'square'; osc.frequency.setValueAtTime(100, now);
       osc.frequency.exponentialRampToValueAtTime(20, now + 0.5);
-      gainNode.gain.setValueAtTime(vol * 0.8, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
-      
-      const osc2 = ctx.createOscillator();
-      osc2.type = 'sawtooth';
-      osc2.frequency.setValueAtTime(50, now);
-      osc2.frequency.exponentialRampToValueAtTime(10, now + 0.5);
-      osc2.connect(gainNode);
-      osc.start(now); osc.stop(now + 0.5);
-      osc2.start(now); osc2.stop(now + 0.5);
+      gainNode.gain.setValueAtTime(vol * 0.8, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+      const osc2 = ctx.createOscillator(); osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(50, now); osc2.frequency.exponentialRampToValueAtTime(10, now + 0.5);
+      osc2.connect(gainNode); osc.start(now); osc.stop(now + 0.5); osc2.start(now); osc2.stop(now + 0.5);
     }
     else if (type === 'win') {
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(440, now); 
-      osc.frequency.setValueAtTime(554, now + 0.15); 
-      osc.frequency.setValueAtTime(659, now + 0.3); 
-      osc.frequency.setValueAtTime(880, now + 0.45); 
-      gainNode.gain.setValueAtTime(vol * 0.15, now); 
-      gainNode.gain.linearRampToValueAtTime(vol * 0.15, now + 0.6);
+      osc.type = 'square'; osc.frequency.setValueAtTime(440, now); osc.frequency.setValueAtTime(554, now + 0.15); 
+      osc.frequency.setValueAtTime(659, now + 0.3); osc.frequency.setValueAtTime(880, now + 0.45); 
+      gainNode.gain.setValueAtTime(vol * 0.15, now); gainNode.gain.linearRampToValueAtTime(vol * 0.15, now + 0.6);
       gainNode.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
       osc.start(now); osc.stop(now + 1.5);
     }
     else if (type === 'lose') {
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(200, now);
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(200, now);
       osc.frequency.exponentialRampToValueAtTime(40, now + 1.5);
-      gainNode.gain.setValueAtTime(vol * 0.2, now); 
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
+      gainNode.gain.setValueAtTime(vol * 0.2, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
       osc.start(now); osc.stop(now + 1.5);
     }
   };
@@ -281,76 +227,33 @@ export default function MeltdownTactics() {
     if (!audioInitialized) {
       try {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext && !audioCtxRef.current) {
-          audioCtxRef.current = new AudioContext();
-        }
-        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-          audioCtxRef.current.resume();
-        }
-        
-        if (USE_MP3_BGM) {
-          if (bgmRef.current) {
-            bgmRef.current.volume = bgmVolume;
-            bgmRef.current.play().catch(e => console.warn("MP3 Play Error:", e));
-          }
-        } else {
-          startSynthBGM();
-        }
-      } catch (err) {
-        console.warn("Audio Context init error:", err);
-      }
-      
+        if (AudioContext && !audioCtxRef.current) audioCtxRef.current = new AudioContext();
+        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+        if (USE_MP3_BGM && bgmRef.current) {
+          bgmRef.current.volume = bgmVolume;
+          bgmRef.current.play().catch(e => console.warn("MP3 Play Error:", e));
+        } else { startSynthBGM(); }
+      } catch (err) { console.warn("Audio Context init error:", err); }
       setAudioInitialized(true);
     }
   };
 
-  const handleStart = (e) => {
-    e.stopPropagation(); 
-    try {
-      initAudioAndStartBGM();
-    } catch(err) {
-      console.warn("Start handle error:", err);
-    }
-
-    setGameState('cutin');
-    const firstTurn = Math.random() < 0.5 ? 'player' : 'cpu';
-    setCutinText(`${firstTurn.toUpperCase()} FIRST`);
-    
-    setTimeout(() => {
-      setGameState('playing');
-      setTurn(firstTurn);
-      setLogs([
-        `=== TURN 1 : ${firstTurn.toUpperCase()} ===`,
-        `SYSTEM_INITIALIZED: ${firstTurn.toUpperCase()} GOES FIRST.`
-      ]);
-    }, 2000);
-  };
-
-  const restartGame = () => {
+  const startGameWithLevel = (level) => {
+    setCpuLevel(level);
     setUnits(INITIAL_UNITS.map(u => ({...u})));
     setTurnCount(1);
     setSelectedId(null);
-    setLogs(["SYSTEM_START: SYSTEM REBOOTED..."]);
     setWinner(null);
     setIsProcessing(false);
     setVfx([]);
     
     try {
-      if (USE_MP3_BGM) {
-        if (bgmRef.current) {
-          bgmRef.current.volume = bgmVolume;
-          bgmRef.current.currentTime = 0;
-          const playPromise = bgmRef.current.play();
-          if (playPromise !== undefined) {
-            playPromise.catch(()=>{});
-          }
-        }
-      } else {
-        startSynthBGM();
-      }
-    } catch (err) {
-      console.warn(err);
-    }
+      if (USE_MP3_BGM && bgmRef.current) {
+        bgmRef.current.volume = bgmVolume;
+        bgmRef.current.currentTime = 0;
+        if (bgmRef.current.paused) bgmRef.current.play().catch(()=>{});
+      } else { startSynthBGM(); }
+    } catch (err) { console.warn(err); }
 
     setGameState('cutin');
     const firstTurn = Math.random() < 0.5 ? 'player' : 'cpu';
@@ -360,34 +263,37 @@ export default function MeltdownTactics() {
       setGameState('playing');
       setTurn(firstTurn);
       setLogs([
-        `=== TURN 1 : ${firstTurn.toUpperCase()} ===`,
-        `SYSTEM_START: SYSTEM REBOOTED. ${firstTurn.toUpperCase()} GOES FIRST.`
+        { id: Date.now(), text: `SYSTEM_INITIALIZED: ${firstTurn.toUpperCase()} GOES FIRST. CPU LV:${level}`, type: 'system', icon: null, iconColor: '' }
       ]);
     }, 2000);
+  };
+
+  const handleStart = (e, selectedLevel) => {
+    e.stopPropagation(); 
+    try { initAudioAndStartBGM(); } catch(err) { console.warn(err); }
+    startGameWithLevel(selectedLevel);
+  };
+
+  const handleReturnToTitle = (e) => {
+    e.stopPropagation();
+    setWinner(null);
+    setGameState('title');
   };
 
   const handleWinner = (nextWinner) => {
     setWinner(nextWinner);
     setGameState('result');
-    addLog(`=== GAME OVER: ${nextWinner.toUpperCase()} WINS ===`);
-    
-    if (USE_MP3_BGM) {
-      if (bgmRef.current) bgmRef.current.volume = 0.1;
-    } else {
-      stopSynthBGM();
-    }
-    
+    addLog(`=== GAME OVER: ${nextWinner.toUpperCase()} WINS ===`, 'system');
+    if (USE_MP3_BGM && bgmRef.current) bgmRef.current.volume = 0.1;
+    else stopSynthBGM();
     if (nextWinner === 'player') playSE('win');
     else if (nextWinner === 'cpu') playSE('lose');
   };
 
   // --- LOGIC ---
-
   const addVfx = (newVfxArray) => {
     setVfx(prev => [...prev, ...newVfxArray]);
-    setTimeout(() => {
-      setVfx(prev => prev.filter(v => !newVfxArray.map(n => n.id).includes(v.id)));
-    }, 1000); 
+    setTimeout(() => { setVfx(prev => prev.filter(v => !newVfxArray.map(n => n.id).includes(v.id))); }, 1000); 
   };
 
   const getDistance = (x1, y1, x2, y2) => Math.abs(x1 - x2) + Math.abs(y1 - y2);
@@ -406,12 +312,10 @@ export default function MeltdownTactics() {
     const cells = [];
     if (!unit) return cells;
     const dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
-
     if (unit.type === 'sniper') {
       for (const [dx, dy] of dirs) {
         for (let dist = 1; dist <= 3; dist++) {
-          const tx = unit.x + dx * dist;
-          const ty = unit.y + dy * dist;
+          const tx = unit.x + dx * dist; const ty = unit.y + dy * dist;
           if (tx < 0 || tx >= BOARD_SIZE || ty < 0 || ty >= BOARD_SIZE) break; 
           if (isWall(tx, ty)) break; 
           const target = currentUnits.find(u => u.x === tx && u.y === ty);
@@ -420,104 +324,115 @@ export default function MeltdownTactics() {
         }
       }
     } else {
-      for (const [dx, dy] of dirs) {
-        cells.push({ x: unit.x + dx, y: unit.y + dy, hasTarget: true });
-      }
+      for (const [dx, dy] of dirs) cells.push({ x: unit.x + dx, y: unit.y + dy, hasTarget: true });
     }
     return cells;
   };
 
-  const applyTurnStart = (currentUnits, owner) => {
-    return currentUnits.map(u => {
-        if(u.owner === owner) return { ...u, hasActed: false };
-        return u;
-    });
-  };
+  const applyTurnStart = (currentUnits, owner) => currentUnits.map(u => (u.owner === owner ? { ...u, hasActed: false } : u));
 
   const executeAction = (stateUnits, actorId, actionType, targetX, targetY) => {
     let newUnits = [...stateUnits];
     let newVfx = [];
+    let actionLogs = [];
+    
     const actorIndex = newUnits.findIndex(u => u.id === actorId);
-    if (actorIndex === -1) return { newUnits, log: "ERROR: UNIT NOT FOUND", vfx: [] };
+    if (actorIndex === -1) return { newUnits, logs: [{text: "ERROR: UNIT NOT FOUND", type: 'warning'}], vfx: [] };
     
     let actor = { ...newUnits[actorIndex] };
     const isOverclock = actor.hasActed;
-    let logStr = "";
-    const actionPrefix = isOverclock ? "[OVERCLOCK] " : "[ACTION] ";
+    const namePrefix = `[${actor.owner === 'player' ? 'P' : 'C'}] ${actor.label}`;
+    const iconColor = actor.owner === 'player' ? 'text-cyan-400' : 'text-rose-500';
     
     if (actionType === 'move') {
-      actor.x = targetX;
-      actor.y = targetY;
-      logStr = `${actionPrefix}${actor.owner.toUpperCase()} ${actor.label} moved.`;
+      actor.x = targetX; actor.y = targetY;
+      actionLogs.push({ text: `${namePrefix} moved.`, type: 'move', icon: actor.icon, iconColor });
       playSE('move');
     } else if (actionType === 'attack') {
       const targetIndex = newUnits.findIndex(u => u.x === targetX && u.y === targetY);
       if (targetIndex !== -1) {
         let target = { ...newUnits[targetIndex] };
-        const damage = (actor.type === 'heavy' || actor.type === 'core') ? 2 : 1;
-        target.hp -= damage;
-        logStr = `${actionPrefix}${actor.owner.toUpperCase()} ${actor.label} attacked for ${damage} DMG!`;
-        newUnits[targetIndex] = target;
         
-        if (actor.type === 'sniper') {
+        if (actor.type === 'hacker') {
+          target.heat += 2;
+          actionLogs.push({ text: `${namePrefix} hacked ${target.label} (Heat +2)!`, type: 'attack', icon: actor.icon, iconColor });
           playSE('sniper');
-          newVfx.push({ id: Date.now(), type: 'laser', x: targetX, y: targetY });
+          newVfx.push({ id: Date.now(), type: 'text', text: `HEAT +2`, x: targetX, y: targetY, color: 'text-amber-500 font-bold text-xl drop-shadow-[0_0_8px_#f59e0b]' });
+          
+          if (target.heat > target.maxHeat) {
+            target.hp = 0;
+            playSE('explosion');
+            actionLogs.push({ text: `!!! ${target.label} FORCED MELTDOWN !!!`, type: 'meltdown', icon: target.icon, iconColor: target.owner === 'player' ? 'text-cyan-400' : 'text-rose-500' });
+            newVfx.push({ id: Date.now() + 1, type: 'explosion', x: targetX, y: targetY });
+            newVfx.push({ id: Date.now() + 2, type: 'text', text: 'MELTDOWN!', x: targetX, y: targetY, color: 'text-red-500 font-black text-2xl drop-shadow-[0_0_10px_#ef4444]' });
+            
+            const adjacentCoords = [{x: targetX, y: targetY - 1}, {x: targetX, y: targetY + 1}, {x: targetX - 1, y: targetY}, {x: targetX + 1, y: targetY}];
+            adjacentCoords.forEach((coord, i) => {
+                const victimIdx = newUnits.findIndex(u => u.x === coord.x && u.y === coord.y && u.hp > 0 && u.id !== target.id);
+                if(victimIdx !== -1) {
+                    let victim = {...newUnits[victimIdx]}; victim.hp -= 1; newUnits[victimIdx] = victim;
+                    if (victim.id === actor.id) actor.hp -= 1; // 自身が巻き込まれた場合
+                    actionLogs.push({ text: `Splash DMG to [${coord.x},${coord.y}]!`, type: 'damage', icon: target.icon, iconColor: 'text-rose-600' });
+                    newVfx.push({ id: Date.now() + 10 + i, type: 'slash', x: coord.x, y: coord.y });
+                    newVfx.push({ id: Date.now() + 20 + i, type: 'text', text: '-1', x: coord.x, y: coord.y, color: 'text-rose-500 font-bold text-xl' });
+                }
+            });
+          }
+          newUnits[targetIndex] = target;
         } else {
-          playSE('attack');
-          newVfx.push({ id: Date.now(), type: 'slash', x: targetX, y: targetY });
+          const damage = (actor.type === 'heavy' || actor.type === 'core') ? 2 : 1;
+          target.hp -= damage;
+          actionLogs.push({ text: `${namePrefix} attacked for ${damage} DMG!`, type: 'attack', icon: actor.icon, iconColor });
+          newUnits[targetIndex] = target;
+          
+          if (actor.type === 'sniper') { playSE('sniper'); newVfx.push({ id: Date.now()+1, type: 'laser', x: targetX, y: targetY }); } 
+          else { playSE('attack'); newVfx.push({ id: Date.now()+1, type: 'slash', x: targetX, y: targetY }); }
+          newVfx.push({ id: Date.now()+2, type: 'text', text: `-${damage}`, x: targetX, y: targetY, color: 'text-rose-400 font-bold text-2xl drop-shadow-[0_0_8px_#f43f5e]' });
         }
-        newVfx.push({ id: Date.now()+1, type: 'text', text: `-${damage}`, x: targetX, y: targetY, color: 'text-rose-400 font-bold text-2xl drop-shadow-[0_0_8px_#f43f5e]' });
       }
     } else if (actionType === 'cooling') {
       actor.heat = Math.max(0, actor.heat - 1);
-      logStr = `${actionPrefix}${actor.owner.toUpperCase()} ${actor.label} COOLED DOWN (Heat -1).`;
+      actionLogs.push({ text: `${namePrefix} COOLED DOWN (Heat -1).`, type: 'cool', icon: actor.icon, iconColor });
       playSE('cooling');
       newVfx.push({ id: Date.now(), type: 'text', text: 'COOL -1', x: actor.x, y: actor.y, color: 'text-emerald-400 font-bold drop-shadow-[0_0_8px_#34d399]' });
     }
 
-    if (!isOverclock) {
-      actor.hasActed = true; 
-    } else {
-      if (actionType !== 'cooling') {
+    if (isOverclock && actionType !== 'cooling') {
+        actionLogs.push({ text: `${namePrefix} OVERCLOCKED (Heat +1).`, type: 'overclock', icon: actor.icon, iconColor });
+    }
+
+    if (!isOverclock) actor.hasActed = true; 
+    else if (actionType !== 'cooling') {
         actor.heat += 1; 
         newVfx.push({ id: Date.now()+2, type: 'text', text: 'HEAT UP!', x: actor.x, y: actor.y, color: 'text-orange-400 font-bold' });
-      }
     }
 
     newUnits[actorIndex] = actor;
 
     let hasMeltdown = false;
-    if (actor.heat > actor.maxHeat) {
+    if (actor.heat > actor.maxHeat && actor.hp > 0) {
         hasMeltdown = true;
         playSE('explosion');
-        logStr += `\n!!! WARNING: ${actor.owner.toUpperCase()} ${actor.label} MELTDOWN !!!`;
+        actionLogs.push({ text: `!!! ${namePrefix} MELTDOWN !!!`, type: 'meltdown', icon: actor.icon, iconColor });
         
         newVfx.push({ id: Date.now() + 3, type: 'explosion', x: actor.x, y: actor.y });
         newVfx.push({ id: Date.now() + 4, type: 'text', text: 'MELTDOWN!', x: actor.x, y: actor.y, color: 'text-red-500 font-black text-2xl drop-shadow-[0_0_10px_#ef4444]' });
 
-        const adjacentCoords = [
-            {x: actor.x, y: actor.y - 1}, {x: actor.x, y: actor.y + 1},
-            {x: actor.x - 1, y: actor.y}, {x: actor.x + 1, y: actor.y}
-        ];
-        
-        actor.hp = 0; 
-        newUnits[actorIndex] = actor;
+        const adjacentCoords = [{x: actor.x, y: actor.y - 1}, {x: actor.x, y: actor.y + 1}, {x: actor.x - 1, y: actor.y}, {x: actor.x + 1, y: actor.y}];
+        actor.hp = 0; newUnits[actorIndex] = actor;
 
         adjacentCoords.forEach(coord => {
             const victimIdx = newUnits.findIndex(u => u.x === coord.x && u.y === coord.y && u.hp > 0);
             if(victimIdx !== -1) {
-                let victim = {...newUnits[victimIdx]};
-                victim.hp -= 1;
-                newUnits[victimIdx] = victim;
-                logStr += `\n> Splash DMG to [${coord.x},${coord.y}]!`;
+                let victim = {...newUnits[victimIdx]}; victim.hp -= 1; newUnits[victimIdx] = victim;
+                actionLogs.push({ text: `Splash DMG to [${coord.x},${coord.y}]!`, type: 'damage', icon: actor.icon, iconColor });
                 newVfx.push({ id: Date.now() + Math.random(), type: 'slash', x: coord.x, y: coord.y });
                 newVfx.push({ id: Date.now() + Math.random(), type: 'text', text: '-1', x: coord.x, y: coord.y, color: 'text-rose-500 font-bold text-xl' });
             }
         });
     }
 
-    const finalUnits = newUnits.filter(u => u.hp > 0);
-    return { newUnits: finalUnits, log: logStr, hasMeltdown, generatedVfx: newVfx };
+    return { newUnits: newUnits.filter(u => u.hp > 0), logs: actionLogs, hasMeltdown, generatedVfx: newVfx };
   };
 
   const handleCellClick = (x, y) => {
@@ -526,75 +441,52 @@ export default function MeltdownTactics() {
     const clickedUnit = units.find(u => u.x === x && u.y === y);
 
     if (!selectedId) {
-      if (clickedUnit && clickedUnit.owner === 'player') {
-        setSelectedId(clickedUnit.id);
-        playSE('move');
-      }
+      if (clickedUnit && clickedUnit.owner === 'player') { setSelectedId(clickedUnit.id); playSE('move'); }
       return;
     }
 
     const selectedUnit = units.find(u => u.id === selectedId);
-    if (!selectedUnit) {
-      setSelectedId(null);
-      return;
-    }
+    if (!selectedUnit) { setSelectedId(null); return; }
 
     if (selectedUnit.x === x && selectedUnit.y === y) {
       if (!selectedUnit.hasActed && selectedUnit.heat > 0) {
         const actionResult = executeAction(units, selectedId, 'cooling', x, y);
-        addLog(actionResult.log);
-        setUnits(actionResult.newUnits);
+        addLogs(actionResult.logs); setUnits(actionResult.newUnits);
         if (actionResult.generatedVfx.length > 0) addVfx(actionResult.generatedVfx);
         setSelectedId(null);
-      } else {
-        setSelectedId(null); 
-      }
+      } else setSelectedId(null); 
       return;
     }
 
     if (clickedUnit && clickedUnit.owner === 'player') {
-      setSelectedId(clickedUnit.id);
-      playSE('move');
-      return;
+      setSelectedId(clickedUnit.id); playSE('move'); return;
     }
 
     let actionResult = null;
-
     if (!clickedUnit) {
-      if (getDistance(selectedUnit.x, selectedUnit.y, x, y) === 1) {
-        actionResult = executeAction(units, selectedId, 'move', x, y);
-      }
+      if (getDistance(selectedUnit.x, selectedUnit.y, x, y) === 1) actionResult = executeAction(units, selectedId, 'move', x, y);
     } else if (clickedUnit.owner === 'cpu') {
       const attackables = getAttackableCells(selectedUnit, units);
-      if (attackables.some(c => c.x === x && c.y === y)) {
-        actionResult = executeAction(units, selectedId, 'attack', x, y);
-      }
+      if (attackables.some(c => c.x === x && c.y === y)) actionResult = executeAction(units, selectedId, 'attack', x, y);
     }
 
     if (actionResult) {
-      addLog(actionResult.log);
-      setUnits(actionResult.newUnits);
+      addLogs(actionResult.logs); setUnits(actionResult.newUnits);
       if (actionResult.generatedVfx.length > 0) addVfx(actionResult.generatedVfx);
       
       const nextWinner = checkWinner(actionResult.newUnits);
-      if (nextWinner) {
-        handleWinner(nextWinner);
-      }
-      
-      if(actionResult.hasMeltdown || actionResult.newUnits.findIndex(u => u.id === selectedId) === -1) {
-          setSelectedId(null);
-      }
+      if (nextWinner) handleWinner(nextWinner);
+      if(actionResult.hasMeltdown || actionResult.newUnits.findIndex(u => u.id === selectedId) === -1) setSelectedId(null);
     }
   };
 
   const endTurn = () => {
     if (gameState !== 'playing' || turn !== 'player' || isProcessing) return;
-    setSelectedId(null);
-    setTurn('cpu');
-    addLog(`=== TURN ${turnCount} : CPU ===`);
+    setSelectedId(null); setTurn('cpu');
+    addLog(`=== TURN ${turnCount} END ===`, 'system');
   };
 
-  // CPU AI
+  // --- CPU AI LOGIC ---
   useEffect(() => {
     if (gameState === 'playing' && turn === 'cpu' && !winner) {
       setIsProcessing(true);
@@ -608,8 +500,7 @@ export default function MeltdownTactics() {
           const pCore = currentUnits.find(u => u.id === 'p_core');
           if (!pCore) break;
 
-          let bestAction = null;
-          let bestScore = -9999;
+          let bestAction = null; let bestScore = -9999;
 
           for (const unit of cpuUnits) {
             const isOverclock = unit.hasActed;
@@ -619,23 +510,24 @@ export default function MeltdownTactics() {
             if (isOverclock) baseScore -= 40; 
             if (willMeltdown) baseScore -= (unit.id === 'c_core') ? 100000 : 100;
 
+            // 冷却判定
             if (!isOverclock && unit.heat > 0) {
               let coolingScore = (unit.heat >= unit.maxHeat) ? 80 : 10;
-              coolingScore += Math.random() * 5;
-              if (coolingScore > bestScore && coolingScore > 0) {
-                bestScore = coolingScore;
-                bestAction = { unitId: unit.id, type: 'cooling', x: unit.x, y: unit.y };
+              if (cpuLevel >= 2) {
+                coolingScore += Math.random() * (cpuLevel === 2 ? 20 : 5);
+                if (coolingScore > bestScore && coolingScore > 0) {
+                  bestScore = coolingScore; bestAction = { unitId: unit.id, type: 'cooling', x: unit.x, y: unit.y };
+                }
               }
             }
 
             const moveCoords = [
-              { x: unit.x, y: unit.y - 1 }, { x: unit.x, y: unit.y + 1 },
-              { x: unit.x - 1, y: unit.y }, { x: unit.x + 1, y: unit.y }
+              { x: unit.x, y: unit.y - 1 }, { x: unit.x, y: unit.y + 1 }, { x: unit.x - 1, y: unit.y }, { x: unit.x + 1, y: unit.y }
             ].filter(m => m.x >= 0 && m.x < BOARD_SIZE && m.y >= 0 && m.y < BOARD_SIZE && !isWall(m.x, m.y));
 
+            // 移動判定
             for (const m of moveCoords) {
               if (currentUnits.find(u => u.x === m.x && u.y === m.y)) continue; 
-
               let score = baseScore;
               const distToCore = getDistance(m.x, m.y, pCore.x, pCore.y);
               const currentDist = getDistance(unit.x, unit.y, pCore.x, pCore.y);
@@ -644,71 +536,85 @@ export default function MeltdownTactics() {
                 const enemies = currentUnits.filter(u => u.owner === 'player');
                 let minEnemyDist = 99;
                 enemies.forEach(e => {
-                  let d = getDistance(m.x, m.y, e.x, e.y);
-                  if (e.type === 'sniper') d -= 1; 
+                  let d = getDistance(m.x, m.y, e.x, e.y); if (e.type === 'sniper') d -= 1; 
                   if (d < minEnemyDist) minEnemyDist = d;
                 });
                 if (minEnemyDist <= 3) score += minEnemyDist * 50; 
                 else if (m.y > unit.y) score -= 20; 
               } else if (unit.type === 'sniper') {
-                if (distToCore === 2 || distToCore === 3) score += 30;
-                else if (distToCore < currentDist) score += 10;
+                if (distToCore === 2 || distToCore === 3) score += 30; else if (distToCore < currentDist) score += 10;
               } else {
-                if (distToCore < currentDist) score += 20; 
-                else score -= 10; 
+                if (distToCore < currentDist) score += 20; else score -= 10; 
               }
 
-              score += Math.random() * 5;
+              // ★ 難易度によるランダム性の追加 ★
+              if (cpuLevel === 1) score += Math.random() * 200;
+              else if (cpuLevel === 2) score += Math.random() * 30;
+              else score += Math.random() * 5;
+
               if (score > bestScore && score > 0) {
-                bestScore = score;
-                bestAction = { unitId: unit.id, type: 'move', x: m.x, y: m.y };
+                bestScore = score; bestAction = { unitId: unit.id, type: 'move', x: m.x, y: m.y };
               }
             }
 
+            // 攻撃判定
             const attackables = getAttackableCells(unit, currentUnits);
             for (const a of attackables) {
               const targetUnit = currentUnits.find(u => u.x === a.x && u.y === a.y);
               if (targetUnit && targetUnit.owner === 'player') {
                 let score = baseScore;
-                const dmg = (unit.type === 'heavy' || unit.type === 'core') ? 2 : 1;
-                const willKill = targetUnit.hp <= dmg;
-
-                if (targetUnit.id === 'p_core') {
-                  score += 500; 
-                  if (willKill) score += 10000; 
+                
+                if (unit.type === 'hacker') {
+                  const forcedMeltdown = (targetUnit.heat + 2) > targetUnit.maxHeat;
+                  if (targetUnit.id === 'p_core') {
+                    score += 200; if (forcedMeltdown) score += 10000; 
+                  } else {
+                    score += 60; if (forcedMeltdown) score += 300; 
+                  }
+                  
+                  if (forcedMeltdown) {
+                    const splashTargets = [{x: targetUnit.x, y: targetUnit.y - 1}, {x: targetUnit.x, y: targetUnit.y + 1}, {x: targetUnit.x - 1, y: targetUnit.y}, {x: targetUnit.x + 1, y: targetUnit.y}];
+                    splashTargets.forEach(st => {
+                      const victim = currentUnits.find(u => u.x === st.x && u.y === st.y);
+                      if (victim && victim.id !== targetUnit.id) {
+                        if (victim.owner === 'player') {
+                          if (victim.id === 'p_core') { score += 800; if (victim.hp === 1) score += 10000; } 
+                          else { score += 80; if (victim.hp === 1) score += 150; }
+                        } else { score -= 50; }
+                      }
+                    });
+                  }
                 } else {
-                  score += 50; 
-                  if (willKill) score += 200; 
-                  if (targetUnit.type === 'sniper') score += 30; 
+                  const dmg = (unit.type === 'heavy' || unit.type === 'core') ? 2 : 1;
+                  const willKill = targetUnit.hp <= dmg;
+
+                  if (targetUnit.id === 'p_core') {
+                    score += 500; if (willKill) score += 10000; 
+                  } else {
+                    score += 50; if (willKill) score += 200; if (targetUnit.type === 'sniper') score += 30; 
+                  }
                 }
 
                 if (willMeltdown && unit.id !== 'c_core') {
-                  const splashTargets = [
-                    {x: unit.x, y: unit.y - 1}, {x: unit.x, y: unit.y + 1},
-                    {x: unit.x - 1, y: unit.y}, {x: unit.x + 1, y: unit.y}
-                  ];
+                  const splashTargets = [{x: unit.x, y: unit.y - 1}, {x: unit.x, y: unit.y + 1}, {x: unit.x - 1, y: unit.y}, {x: unit.x + 1, y: unit.y}];
                   splashTargets.forEach(st => {
                     const victim = currentUnits.find(u => u.x === st.x && u.y === st.y);
                     if (victim) {
                       if (victim.owner === 'player') {
-                        if (victim.id === 'p_core') {
-                          score += 800; 
-                          if (victim.hp === 1) score += 10000; 
-                        } else {
-                          score += 80;
-                          if (victim.hp === 1) score += 150;
-                        }
-                      } else {
-                        score -= 50; 
-                      }
+                        if (victim.id === 'p_core') { score += 800; if (victim.hp === 1) score += 10000; } 
+                        else { score += 80; if (victim.hp === 1) score += 150; }
+                      } else { score -= 50; }
                     }
                   });
                 }
 
-                score += Math.random() * 5;
+                // ★ 難易度によるランダム性の追加 ★
+                if (cpuLevel === 1) score += Math.random() * 300;
+                else if (cpuLevel === 2) score += Math.random() * 40;
+                else score += Math.random() * 5;
+
                 if (score > bestScore && score > 0) {
-                  bestScore = score;
-                  bestAction = { unitId: unit.id, type: 'attack', x: a.x, y: a.y };
+                  bestScore = score; bestAction = { unitId: unit.id, type: 'attack', x: a.x, y: a.y };
                 }
               }
             }
@@ -717,38 +623,33 @@ export default function MeltdownTactics() {
           if (!bestAction) break; 
 
           const actionResult = executeAction(currentUnits, bestAction.unitId, bestAction.type, bestAction.x, bestAction.y);
-          
           if (actionResult) {
             currentUnits = actionResult.newUnits;
-            addLog(actionResult.log);
-            setUnits([...currentUnits]);
+            addLogs(actionResult.logs); setUnits([...currentUnits]);
             if (actionResult.generatedVfx.length > 0) addVfx(actionResult.generatedVfx);
             
             await new Promise(r => setTimeout(r, 800)); 
 
             const nextWinner = checkWinner(currentUnits);
-            if (nextWinner) {
-                handleWinner(nextWinner);
-                break;
-            }
+            if (nextWinner) { handleWinner(nextWinner); break; }
           }
         }
 
         if (!checkWinner(currentUnits)) {
             currentUnits = applyTurnStart(currentUnits, 'player');
-            setUnits(currentUnits);
-            setTurnCount(c => c + 1);
-            setTurn('player');
-            addLog(`=== TURN ${turnCount + 1} : PLAYER ===`);
+            setUnits(currentUnits); setTurnCount(c => c + 1); setTurn('player');
+            addLog(`=== TURN ${turnCount + 1} ===`, 'system');
         }
         setIsProcessing(false);
       };
 
       cpuLogic();
     }
-  }, [gameState, turn, winner]);
+  }, [gameState, turn, winner, cpuLevel]);
 
   // --- RENDER ---
+  const deadPlayerUnits = INITIAL_UNITS.filter(u => u.owner === 'player' && !units.some(alive => alive.id === u.id));
+  const deadCpuUnits = INITIAL_UNITS.filter(u => u.owner === 'cpu' && !units.some(alive => alive.id === u.id));
 
   const renderCell = (x, y) => {
     const isWallCell = isWall(x, y);
@@ -757,33 +658,35 @@ export default function MeltdownTactics() {
     const Icon = unit?.icon;
     const cellVfx = vfx.filter(v => v.x === x && v.y === y);
 
-    let isTargetable = false;
-    let isAttackable = false;
-    let isCoolable = false; 
+    let isTargetable = false; let isAttackable = false; let isCoolable = false; 
     
     if (selectedId && turn === 'player' && gameState === 'playing' && !isWallCell) {
       const selected = units.find(u => u.id === selectedId);
       if (selected) {
-        if (getDistance(selected.x, selected.y, x, y) === 1 && !unit) {
-          isTargetable = true;
-        }
+        if (getDistance(selected.x, selected.y, x, y) === 1 && !unit) isTargetable = true;
         const attackables = getAttackableCells(selected, units);
-        if (attackables.some(c => c.x === x && c.y === y) && unit && unit.owner === 'cpu') {
-          isAttackable = true;
-        }
-        if (selected.x === x && selected.y === y && !selected.hasActed && selected.heat > 0) {
-          isCoolable = true;
-        }
+        if (attackables.some(c => c.x === x && c.y === y) && unit && unit.owner === 'cpu') isAttackable = true;
+        if (selected.x === x && selected.y === y && !selected.hasActed && selected.heat > 0) isCoolable = true;
       }
     }
 
     let cellClass = "w-8 h-8 sm:w-12 sm:h-12 md:w-14 md:h-14 border border-slate-800/50 flex flex-col items-center justify-center relative cursor-pointer transition-colors";
     
     if (isWallCell) {
-      cellClass += " bg-slate-900 border-slate-700/50";
       return (
-        <div key={`${x}-${y}`} className={cellClass}>
-          <Lock size={16} className="text-slate-700 sm:w-5 sm:h-5" />
+        <div key={`${x}-${y}`} className={`${cellClass} bg-amber-950/30 border-amber-500/50 overflow-hidden relative shadow-[inset_0_0_15px_rgba(245,158,11,0.3)]`}>
+          {/* デジタルバリケードのストライプ（オレンジを強調） */}
+          <div className="absolute inset-0 opacity-30 bg-[repeating-linear-gradient(-45deg,transparent,transparent_4px,#f59e0b_4px,#f59e0b_8px)] animate-[pulse_4s_ease-in-out_infinite]" />
+          {/* 上下のシャドウで立体感を演出 */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/60" />
+          <div className="absolute inset-[2px] border border-amber-400/30 rounded-sm pointer-events-none" />
+          
+          {/* 中央の警告ロックアイコン */}
+          <div className="relative z-10 flex items-center justify-center w-full h-full">
+             <div className="border border-amber-500/80 p-[3px] bg-black/80 rounded-sm flex items-center justify-center shadow-[0_0_10px_rgba(245,158,11,0.5)]">
+                <Lock size={12} className="text-amber-400 drop-shadow-[0_0_5px_#f59e0b]" />
+             </div>
+          </div>
         </div>
       );
     }
@@ -795,18 +698,10 @@ export default function MeltdownTactics() {
     else cellClass += " bg-slate-900/30 hover:bg-slate-800/50";
 
     return (
-      <div 
-        key={`${x}-${y}`} 
-        className={cellClass}
-        onClick={() => handleCellClick(x, y)}
-      >
+      <div key={`${x}-${y}`} className={cellClass} onClick={() => handleCellClick(x, y)}>
         {cellVfx.map(v => {
           if (v.type === 'text') {
-            return (
-              <div key={v.id} className={`absolute z-50 pointer-events-none animate-[slideUpFade_1s_ease-out_forwards] ${v.color}`}>
-                {v.text}
-              </div>
-            );
+            return (<div key={v.id} className={`absolute z-50 pointer-events-none animate-[slideUpFade_1s_ease-out_forwards] ${v.color}`}>{v.text}</div>);
           }
           return (
             <div key={v.id} className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
@@ -860,15 +755,9 @@ export default function MeltdownTactics() {
       onClick={initAudioAndStartBGM} 
     >
       
-      {/* 📺 CRT Scanline Effect (確実にクリックを貫通させるようインラインスタイルを追加) */}
-      <div 
-        className="fixed inset-0 z-[100] opacity-10 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[length:100%_4px]" 
-        style={{ pointerEvents: 'none' }}
-      />
-      <div 
-        className="fixed inset-0 z-[100] opacity-5 mix-blend-overlay bg-blue-900 animate-[pulse_4s_ease-in-out_infinite]" 
-        style={{ pointerEvents: 'none' }}
-      />
+      {/* 📺 CRT Scanline Effect */}
+      <div className="fixed inset-0 z-[100] opacity-10 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[length:100%_4px]" style={{ pointerEvents: 'none' }} />
+      <div className="fixed inset-0 z-[100] opacity-5 mix-blend-overlay bg-blue-900 animate-[pulse_4s_ease-in-out_infinite]" style={{ pointerEvents: 'none' }} />
 
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes slideUpFade {
@@ -888,13 +777,14 @@ export default function MeltdownTactics() {
             MELTDOWN<br/>TACTICS
           </h1>
           
-          <button 
-            onClick={handleStart}
-            className="group relative px-8 py-4 bg-transparent border border-cyan-500 text-cyan-400 font-bold tracking-widest uppercase overflow-hidden transition-all hover:text-slate-950 hover:border-transparent hover:shadow-[0_0_30px_rgba(34,211,238,0.8)] z-[200]"
-          >
-            <div className="absolute inset-0 bg-cyan-400 w-0 group-hover:w-full transition-all duration-300 ease-out z-0" />
-            <span className="relative z-10">Initialize System</span>
-          </button>
+          <div className="flex flex-col items-center gap-4 bg-slate-900/50 p-6 rounded-2xl border border-slate-800">
+             <p className="text-slate-400 font-mono text-sm tracking-[0.3em] mb-2">SELECT CPU DIFFICULTY</p>
+             <div className="flex gap-4">
+                 <button onClick={(e) => handleStart(e, 1)} className="px-6 py-3 border border-emerald-500 text-emerald-400 font-bold tracking-widest hover:bg-emerald-900/50 transition-colors">EASY</button>
+                 <button onClick={(e) => handleStart(e, 2)} className="px-6 py-3 border border-amber-500 text-amber-400 font-bold tracking-widest hover:bg-amber-900/50 transition-colors">NORMAL</button>
+                 <button onClick={(e) => handleStart(e, 3)} className="px-6 py-3 border border-rose-500 text-rose-400 font-bold tracking-widest hover:bg-rose-900/50 transition-colors shadow-[0_0_15px_rgba(244,63,94,0.3)]">HARD</button>
+             </div>
+          </div>
         </div>
       )}
 
@@ -977,30 +867,31 @@ export default function MeltdownTactics() {
           
           {/* Status Bar */}
           <div className="w-full flex justify-between items-center mb-4 px-6 py-3 bg-[#0f172a]/80 backdrop-blur border border-slate-700/50 rounded-xl shadow-lg">
-            <div className={`font-bold flex items-center gap-2 ${turn === 'player' ? 'text-cyan-400 drop-shadow-[0_0_5px_#22d3ee]' : 'text-slate-600'}`}>
-              <div className={`w-2 h-2 rounded-full ${turn === 'player' ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'}`} />
-              PLAYER
+            <div className={`font-bold flex flex-col sm:flex-row items-center gap-2 ${turn === 'player' ? 'text-cyan-400 drop-shadow-[0_0_5px_#22d3ee]' : 'text-slate-600'}`}>
+              <div className={`w-2 h-2 rounded-full hidden sm:block ${turn === 'player' ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'}`} />
+              <span>PLAYER</span>
             </div>
             
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] text-slate-500 tracking-[0.2em] mb-1">UNITS READY</span>
-              <div className="flex gap-1">
-                {Array.from({length: playerUnits.length}).map((_, i) => (
-                  <div key={i} className={`w-3 h-1.5 rounded-sm ${i < readyPlayerUnits ? 'bg-emerald-400 shadow-[0_0_5px_#34d399]' : 'bg-slate-800'}`} />
-                ))}
-              </div>
+            {/* ターン数の表示を追加 */}
+            <div className="flex flex-col items-center mx-2">
+               <span className="text-xl sm:text-2xl font-black tracking-widest text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">
+                  TURN {turnCount}
+               </span>
+               <div className="flex gap-1 mt-1">
+                 {Array.from({length: playerUnits.length}).map((_, i) => (
+                   <div key={i} className={`w-2 h-1 rounded-sm ${i < readyPlayerUnits ? 'bg-emerald-400' : 'bg-slate-800'}`} />
+                 ))}
+               </div>
             </div>
 
-            <div className={`font-bold flex items-center gap-2 ${turn === 'cpu' ? 'text-rose-500 drop-shadow-[0_0_5px_#f43f5e]' : 'text-slate-600'}`}>
-              {/* Computing表示をステータスバーに移動 */}
-              {isProcessing ? <span className="animate-pulse tracking-widest text-xs sm:text-base">COMPUTING...</span> : 'CPU'}
-              <div className={`w-2 h-2 rounded-full ${turn === 'cpu' ? 'bg-rose-500 animate-pulse' : 'bg-slate-600'}`} />
+            <div className={`font-bold flex flex-col sm:flex-row items-center gap-2 ${turn === 'cpu' ? 'text-rose-500 drop-shadow-[0_0_5px_#f43f5e]' : 'text-slate-600'}`}>
+              {isProcessing ? <span className="animate-pulse tracking-widest text-xs sm:text-base">COMPUTING...</span> : <span>CPU (Lv{cpuLevel})</span>}
+              <div className={`w-2 h-2 rounded-full hidden sm:block ${turn === 'cpu' ? 'bg-rose-500 animate-pulse' : 'bg-slate-600'}`} />
             </div>
           </div>
 
           {/* Board */}
           <div className="bg-[#0f172a] p-3 sm:p-5 rounded-2xl border border-slate-800 shadow-[0_0_30px_rgba(0,0,0,0.8)] relative">
-            {/* 盤面を隠さないスキャンエフェクトのみ */}
             {isProcessing && (
               <div className="absolute inset-0 pointer-events-none z-10 rounded-2xl overflow-hidden border border-rose-500/20">
                 <div className="absolute top-0 left-0 w-full h-1 bg-rose-500/50 shadow-[0_0_15px_#f43f5e] animate-[scan_2s_linear_infinite]" />
@@ -1035,60 +926,71 @@ export default function MeltdownTactics() {
         </div>
 
         {/* Right: Info & Logs */}
-        <div className="w-full md:w-80 flex flex-col gap-6">
+        <div className="w-full md:w-80 flex flex-col gap-4">
           <div className="bg-[#0f172a]/80 border border-slate-800 rounded-xl p-4 backdrop-blur shadow-lg">
             <h3 className="text-slate-400 font-bold mb-3 border-b border-slate-700/50 pb-2 flex items-center gap-2 text-sm tracking-widest">
                <Terminal size={14} className="text-cyan-500"/> UNIT DATABANK
             </h3>
             <ul className="space-y-3 text-xs sm:text-sm">
-              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50 hover:border-slate-700 transition-colors">
+              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50">
                 <div className="text-cyan-400 mt-0.5"><Crown size={16}/></div>
-                <div>
-                  <p className="font-bold text-slate-200">CORE <span className="text-slate-500 font-normal ml-1">HP:4 / DMG:2 / Heat:2</span></p>
-                  <p className="text-[10px] text-amber-400/80 mt-0.5">Boss Unit. Destruction = Defeat.</p>
-                </div>
+                <div><p className="font-bold text-slate-200">CORE <span className="text-slate-500 font-normal ml-1">HP:4/ATK:2/Heat:2</span></p></div>
               </li>
-              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50 hover:border-slate-700 transition-colors">
-                <div className="text-cyan-400 mt-0.5"><Shield size={16}/></div>
-                <div>
-                  <p className="font-bold text-slate-200">HEAVY <span className="text-slate-500 font-normal ml-1">HP:2 / DMG:2 / Heat:1</span></p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">High DMG. Overclocks poorly.</p>
-                </div>
+              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50">
+                <div className="text-cyan-400 mt-0.5"><Eye size={16}/></div>
+                <div><p className="font-bold text-slate-200">HACKER <span className="text-slate-500 font-normal ml-1">HP:1/ATK:0/Heat:2</span></p><p className="text-[10px] text-amber-400/80 mt-0.5">Forces target Heat +2</p></div>
               </li>
-              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50 hover:border-slate-700 transition-colors">
+              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50">
                 <div className="text-cyan-400 mt-0.5"><Zap size={16}/></div>
-                <div>
-                  <p className="font-bold text-slate-200">SPEED <span className="text-slate-500 font-normal ml-1">HP:1 / DMG:1 / Heat:3</span></p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Can overclock safely.</p>
-                </div>
+                <div><p className="font-bold text-slate-200">SPEED <span className="text-slate-500 font-normal ml-1">HP:1/ATK:1/Heat:3</span></p></div>
               </li>
-              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50 hover:border-slate-700 transition-colors">
+              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50">
                 <div className="text-cyan-400 mt-0.5"><Target size={16}/></div>
-                <div>
-                  <p className="font-bold text-slate-200">SNIPER <span className="text-slate-500 font-normal ml-1">HP:1 / DMG:1 / Heat:2</span></p>
-                  <p className="text-[10px] text-cyan-300/80 mt-0.5">Ranged Attack (2-3 cells).</p>
-                </div>
+                <div><p className="font-bold text-slate-200">SNIPER <span className="text-slate-500 font-normal ml-1">HP:1/ATK:1/Heat:2</span></p></div>
               </li>
             </ul>
+          </div>
+
+          {/* Casualties (破壊されたユニット) */}
+          <div className="bg-[#0f172a]/80 border border-slate-800 rounded-xl p-4 backdrop-blur shadow-lg">
+             <h3 className="text-slate-500 font-bold mb-3 border-b border-slate-700/50 pb-2 flex items-center justify-between text-xs tracking-widest">
+               <span>☠️ CASUALTIES</span>
+             </h3>
+             <div className="flex justify-between">
+                 <div className="w-1/2 pr-2 border-r border-slate-700/50 min-h-[30px] flex flex-wrap gap-1 content-start">
+                     {deadPlayerUnits.map((u, i) => <u.icon key={`dp-${i}`} size={16} className="text-cyan-600 opacity-80 drop-shadow-[0_0_3px_rgba(8,145,178,0.8)]" />)}
+                 </div>
+                 <div className="w-1/2 pl-2 min-h-[30px] flex flex-wrap gap-1 content-start">
+                     {deadCpuUnits.map((u, i) => <u.icon key={`dc-${i}`} size={16} className="text-rose-600 opacity-80 drop-shadow-[0_0_3px_rgba(225,29,72,0.8)]" />)}
+                 </div>
+             </div>
           </div>
 
           <div className="flex-1 min-h-[250px] bg-[#0a0f18] border border-slate-800 rounded-xl p-4 font-mono text-xs overflow-hidden flex flex-col relative shadow-[inset_0_0_20px_rgba(0,0,0,0.5)]">
             <div className="text-cyan-600 font-bold mb-3 pb-2 border-b border-cyan-900/30 flex items-center justify-between sticky top-0 bg-[#0a0f18] z-10 tracking-widest">
               <span>&gt;_ SYSTEM_LOG</span>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-1.5 scrollbar-thin scrollbar-thumb-cyan-900/50 scrollbar-track-transparent pr-2 pt-1">
-              {logs.map((log, i) => {
-                let color = "text-cyan-500/60";
-                if (log.includes("PLAYER")) color = "text-cyan-300";
-                if (log.includes("CPU")) color = "text-rose-400";
-                if (log.includes("MELTDOWN") || log.includes("WARNING")) color = "text-amber-500 font-bold";
-                if (log.includes("OVERCLOCK")) color = "text-orange-400";
-                if (log.includes("COOLED")) color = "text-emerald-400";
-                if (log.includes("DMG") || log.includes("attacked") || log.includes("Splash")) color = "text-red-400";
+            <div className="flex-1 overflow-y-auto space-y-2 scrollbar-thin scrollbar-thumb-cyan-900/50 scrollbar-track-transparent pr-2 pt-1">
+              {logs.map((log) => {
+                let color = "text-slate-500";
+                let IconStr = "▶";
                 
+                if (log.type === 'move') { color = "text-cyan-600"; IconStr = "🏃"; }
+                if (log.type === 'attack') { color = "text-rose-400"; IconStr = "⚔️"; }
+                if (log.type === 'cool') { color = "text-emerald-400"; IconStr = "❄️"; }
+                if (log.type === 'overclock') { color = "text-orange-400"; IconStr = "🔥"; }
+                if (log.type === 'meltdown') { color = "text-red-500 font-bold"; IconStr = "💥"; }
+                if (log.type === 'damage') { color = "text-rose-600"; IconStr = "🩸"; }
+                if (log.type === 'warning') { color = "text-amber-400"; IconStr = "⚠️"; }
+                if (log.type === 'system') { color = "text-cyan-300"; IconStr = "💻"; }
+                
+                const UnitIcon = log.icon;
+
                 return (
-                  <div key={i} className={`whitespace-pre-wrap leading-relaxed ${color}`}>
-                    {log}
+                  <div key={log.id} className={`whitespace-pre-wrap leading-relaxed flex items-start gap-1.5 ${color}`}>
+                    <span className="opacity-80 shrink-0 mt-[1px] text-[10px]">{IconStr}</span>
+                    {UnitIcon && <UnitIcon size={12} className={`shrink-0 mt-[2px] ${log.iconColor}`} />}
+                    <span className="flex-1 break-words">{log.text}</span>
                   </div>
                 );
               })}
@@ -1143,57 +1045,57 @@ export default function MeltdownTactics() {
 
       {/* --- Help Modal --- */}
       {showHelp && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-          <div className="bg-slate-900 border border-cyan-500 rounded-xl p-6 max-w-2xl w-full h-[80vh] overflow-y-auto shadow-[0_0_50px_rgba(6,182,212,0.2)] relative scrollbar-thin scrollbar-thumb-cyan-900">
-            <button onClick={() => setShowHelp(false)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors">
-              <X size={24} />
-            </button>
-            <h2 className="text-2xl font-bold text-cyan-400 mb-8 flex items-center gap-3 tracking-widest border-b border-slate-800 pb-4">
-              <HelpCircle size={24}/> TACTICAL MANUAL
-            </h2>
-            
-            <div className="space-y-8 text-slate-300 leading-relaxed text-sm sm:text-base">
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[300] p-4 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-slate-900 border border-cyan-500 rounded-2xl p-8 max-w-2xl w-full relative">
+            <button onClick={() => setShowHelp(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X size={24} /></button>
+            <h2 className="text-3xl font-black text-cyan-400 mb-8 border-b border-slate-800 pb-4 tracking-tighter">TACTICAL_MANUAL</h2>
+            <div className="space-y-6 text-slate-300 text-sm leading-relaxed font-mono">
               <section>
-                <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
-                  <span className="text-cyan-500">01.</span> VICTORY CONDITION
-                </h3>
-                <p className="bg-slate-950 p-4 rounded border border-slate-800">
-                  相手の<strong className="text-cyan-400">CORE（王）</strong>のHPを0にすれば勝利です。自分のCOREが破壊されると敗北します。
-                </p>
+                <h4 className="text-white font-bold mb-2">01_ OBJECTIVE</h4>
+                <p>敵陣の機体群を突破し、相手のリーダー機「CORE」のHPを0にすれば勝利。自分のCOREを失えば即座に作戦失敗（敗北）となる。</p>
               </section>
-              
               <section>
-                <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
-                  <span className="text-cyan-500">02.</span> BASIC ACTIONS
-                </h3>
-                <div className="bg-slate-950 p-4 rounded border border-slate-800 space-y-3">
-                  <p>自分のターン中、<strong className="text-emerald-400">各ユニットは1回ずつ</strong>安全に行動（移動 または 攻撃）することができます。</p>
-                  <p>まだ行動していないユニットには、左上に<strong className="text-emerald-400">緑色のランプ</strong>が点灯します。</p>
-                  <div className="border-l-2 border-emerald-500 pl-4 mt-2">
-                    <strong className="text-emerald-400 block mb-1">【COOLING (冷却)】</strong>
-                    未行動（緑ランプ点灯）かつ 熱が溜まっているコマを選択し、<strong>自分自身のマスをもう一度クリックする</strong>と、そのターンは動かずに「冷却」を行います。行動権を消費し、Heatが 1 下がります。
-                  </div>
-                </div>
+                <h4 className="text-emerald-400 font-bold mb-2">02_ COOLING_SYSTEM</h4>
+                <p>各機体は1ターンに1回、安全に行動（移動または攻撃）できる。未行動の機体を自身でクリックすると「冷却」を行い、蓄積されたHeatを1減少させることが可能。</p>
               </section>
-
               <section>
-                <h3 className="text-lg font-bold text-amber-400 mb-3 flex items-center gap-2">
-                  <span className="text-amber-500">03.</span> OVERCLOCK & MELTDOWN
-                </h3>
-                <div className="bg-slate-950 p-4 rounded border border-slate-800 border-l-amber-500 space-y-3">
-                  <p>「すでに1回行動したユニット」を選択し、さらに行動させることも可能です。これが<strong className="text-amber-400">「OVERCLOCK」</strong>です。</p>
-                  <ul className="list-disc pl-5 space-y-2 marker:text-amber-500">
-                    <li>オーバークロックで行動すると、そのユニットの <strong className="text-orange-500">Heat（熱ゲージ）</strong> が 1 上昇します。</li>
-                    <li>Heatが「MaxHeat（限界値）」を超えた瞬間、そのユニットは<strong className="text-red-500 font-bold">メルトダウン（自爆）</strong>します！</li>
-                    <li>自爆したユニットは消滅し、<strong>周囲十字4マスにいる全てのユニット（味方含む）に 1 ダメージ（貫通）</strong>を与えます。</li>
-                  </ul>
-                </div>
+                <h4 className="text-amber-500 font-bold mb-2">03_ OVERCLOCK_RISK</h4>
+                <p>行動済みの機体を無理やり再行動させる「オーバークロック」が可能。代償としてHeatが1上昇し、限界値を超えた瞬間に機体は「メルトダウン（自爆）」を起こし、周囲十字4マスにダメージを撒き散らして消滅する。</p>
+              </section>
+              <section>
+                <h4 className="text-fuchsia-400 font-bold mb-2">04_ HACKER UNIT</h4>
+                <p>「HACKER (ハッカー)」は物理ダメージを与えない代わりに、攻撃対象の<strong className="text-orange-500">Heatを強制的に +2</strong> させる。すでに熱が溜まっている機体を狙うことで、<strong>強制的にメルトダウン（誘爆）を引き起こす</strong>恐ろしいユニットだ。</p>
               </section>
             </div>
           </div>
         </div>
       )}
 
+      {/* --- 結果画面 --- */}
+      {winner && (
+        <div className="fixed inset-0 bg-slate-950/95 z-[400] flex items-center justify-center p-4 animate-in fade-in duration-700">
+            <div className={`text-center p-10 sm:p-16 rounded-[3rem] border-8 shadow-[0_0_150px_rgba(0,0,0,1)] ${winner === 'player' ? 'border-cyan-400 bg-cyan-950/20' : 'border-rose-600 bg-rose-950/20'}`}>
+                <p className="text-slate-500 font-mono tracking-[0.5em] mb-4">MISSION_COMPLETE</p>
+                <h2 className={`text-7xl sm:text-9xl font-black mb-12 italic ${winner === 'player' ? 'text-cyan-400 drop-shadow-[0_0_30px_#22d3ee]' : 'text-rose-500 drop-shadow-[0_0_30px_#f43f5e]'}`}>{winner === 'player' ? 'VICTORY' : 'DEFEAT'}</h2>
+                
+                <div className="flex flex-col sm:flex-row gap-6 justify-center items-center">
+                    <button onClick={(e) => handleStart(e, cpuLevel)} className="w-full sm:w-auto px-10 py-5 bg-transparent border-2 border-white text-white font-black tracking-[0.2em] rounded-full hover:bg-white hover:text-black transition-all transform hover:scale-105">
+                        RETRY (LV {cpuLevel})
+                    </button>
+                    <button onClick={handleReturnToTitle} className="w-full sm:w-auto px-10 py-5 bg-transparent border-2 border-cyan-500 text-cyan-400 font-black tracking-[0.2em] rounded-full hover:bg-cyan-500 hover:text-slate-950 transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] transform hover:scale-105">
+                        CHANGE LEVEL
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      <style dangerouslySetInnerHTML={{__html:`
+        @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+        .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #083344; border-radius: 2px; }
+      `}}/>
     </div>
   );
 }
