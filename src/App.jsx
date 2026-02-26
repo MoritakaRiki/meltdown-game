@@ -6,12 +6,6 @@ const BOARD_SIZE = 9;
 // ★ 公開時にMP3ファイルを使う場合は、ここを true に変更してください ★
 const USE_MP3_BGM = true;
 
-const WALLS = [
-  { x: 2, y: 2 }, { x: 6, y: 2 },
-  { x: 4, y: 4 }, // 中央の要塞
-  { x: 2, y: 6 }, { x: 6, y: 6 }
-];
-
 const INITIAL_UNITS = [
   // Player Units
   { id: 'p_core', owner: 'player', type: 'core', x: 4, y: 8, hp: 4, maxHp: 4, heat: 0, maxHeat: 2, hasActed: false, icon: Crown, label: 'Core' },
@@ -34,12 +28,52 @@ const INITIAL_UNITS = [
   { id: 'c_speed2', owner: 'cpu', type: 'speed', x: 5, y: 1, hp: 1, maxHp: 1, heat: 0, maxHeat: 3, hasActed: false, icon: Zap, label: 'Speed' },
 ];
 
+// --- 対称ランダム地形生成アルゴリズム ---
+const generateSymmetricWalls = () => {
+    const newWalls = [];
+
+    // エリア1: 中央マス (30%の確率で壁)
+    if (Math.random() < 0.3) {
+        newWalls.push({ x: 4, y: 4 });
+    }
+
+    // エリア2: 中央横ライン (y=4, x=0~3) -> 0〜1個のペアを配置して対称にする
+    const centerCandidates = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+    const centerCount = Math.floor(Math.random() * 2); // 0 to 1
+    for (let i = 0; i < centerCount; i++) {
+        const x = centerCandidates[i];
+        newWalls.push({ x: x, y: 4 });
+        newWalls.push({ x: 8 - x, y: 4 }); // 対称位置
+    }
+
+    // エリア3: 前線エリア (y=2~3) -> 1〜2個のペアを配置して対称(y=5~6)にする
+    const forwardCandidates = [];
+    for (let y = 2; y <= 3; y++) {
+        for (let x = 0; x < BOARD_SIZE; x++) {
+            forwardCandidates.push({x, y});
+        }
+    }
+    forwardCandidates.sort(() => Math.random() - 0.5);
+    const forwardCount = 1 + Math.floor(Math.random() * 2); // 1 to 2
+    for (let i = 0; i < forwardCount; i++) {
+        const pos = forwardCandidates[i];
+        newWalls.push({ x: pos.x, y: pos.y });
+        newWalls.push({ x: 8 - pos.x, y: 8 - pos.y }); // 対称位置
+    }
+
+    return newWalls;
+};
+
+const DEFAULT_WALLS = generateSymmetricWalls();
+
 export default function App() {
   const [gameState, setGameState] = useState('title'); 
   const [cpuLevel, setCpuLevel] = useState(3); // 1: Easy, 2: Normal, 3: Hard
   const [cutinText, setCutinText] = useState("");
   
   const [units, setUnits] = useState(INITIAL_UNITS.map(u => ({...u}))); 
+  const [walls, setWalls] = useState(DEFAULT_WALLS); // 壁の配置をStateで管理
+  
   const [turn, setTurn] = useState(null); 
   const [turnCount, setTurnCount] = useState(1);
   const [selectedId, setSelectedId] = useState(null);
@@ -206,16 +240,13 @@ export default function App() {
       osc2.connect(gainNode); osc.start(now); osc.stop(now + 0.5); osc2.start(now); osc2.stop(now + 0.5);
     }
     else if (type === 'turnend') {
-      // 軽快でサイバーな「ピロッ」というシステム承認音
       osc.type = 'square';
       osc.frequency.setValueAtTime(1046, now); // C6
       osc.frequency.setValueAtTime(1568, now + 0.08); // G6
-      
       gainNode.gain.setValueAtTime(vol * 0.15, now);
       gainNode.gain.linearRampToValueAtTime(0.01, now + 0.07);
       gainNode.gain.setValueAtTime(vol * 0.15, now + 0.08);
       gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
-      
       osc.start(now); osc.stop(now + 0.25);
     }
     else if (type === 'win') {
@@ -252,6 +283,7 @@ export default function App() {
   const startGameWithLevel = (level) => {
     setCpuLevel(level);
     setUnits(INITIAL_UNITS.map(u => ({...u})));
+    setWalls(generateSymmetricWalls()); // 毎ゲームごとに壁をランダム生成
     setTurnCount(1);
     setSelectedId(null);
     setWinner(null);
@@ -308,7 +340,7 @@ export default function App() {
   };
 
   const getDistance = (x1, y1, x2, y2) => Math.abs(x1 - x2) + Math.abs(y1 - y2);
-  const isWall = (x, y) => WALLS.some(w => w.x === x && w.y === y);
+  const isWall = (x, y) => walls.some(w => w.x === x && w.y === y); // Stateの壁を参照する
 
   const checkWinner = (currentUnits) => {
     const pCore = currentUnits.find(u => u.id === 'p_core');
@@ -332,7 +364,7 @@ export default function App() {
             const nx = x + dx;
             const ny = y + dy;
             if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE) {
-                if (isWall(nx, ny)) continue;
+                if (walls.some(w => w.x === nx && w.y === ny)) continue; // 壁チェック
                 if (currentUnits.some(u => u.x === nx && u.y === ny)) continue;
                 if (d + 1 < dists[ny][nx]) {
                     dists[ny][nx] = d + 1;
@@ -342,7 +374,7 @@ export default function App() {
         }
     }
     return dists;
-  }, []);
+  }, [walls]);
 
   const getAttackableCells = (unit, currentUnits) => {
     const cells = [];
@@ -522,7 +554,7 @@ export default function App() {
           const distance = movementMap[y][x];
           if (distance > 0 && distance !== Infinity) {
               const deltaHeat = !selectedUnit.hasActed ? distance - 1 : distance;
-              // 限界値+1（自爆するマス）までは移動可能とする。それ以上は途中で燃え尽きるため不可。
+              // 限界値+1（自爆する瞬間）までは到達可能。それ以上は途中で燃え尽きるため不可。
               if (selectedUnit.heat + deltaHeat <= selectedUnit.maxHeat + 1) {
                   actionResult = executeAction(units, selectedId, 'move', x, y, distance);
               }
@@ -704,7 +736,7 @@ export default function App() {
 
       cpuLogic();
     }
-  }, [gameState, turn, winner, cpuLevel]);
+  }, [gameState, turn, winner, cpuLevel, walls]); // walls依存を追加
 
   // --- RENDER ---
   const deadPlayerUnits = INITIAL_UNITS.filter(u => u.owner === 'player' && !units.some(alive => alive.id === u.id));
