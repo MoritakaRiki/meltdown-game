@@ -1218,7 +1218,7 @@ export default function App() {
                 <div className="bg-slate-950 p-4 rounded border border-slate-800 space-y-3">
                   <p>自分のターン中、<strong className="text-emerald-400">各ユニットは1回ずつ</strong>安全に行動（移動 または 攻撃）することができます。</p>
                   <p>まだ行動していないユニットには、左上に<strong className="text-emerald-400">緑色のランプ</strong>が点灯します。</p>
-                  <p>★ 今回のアップデートにより、<strong>青くハイライトされた遠くのマスをクリックして一気に移動</strong>できるようになりました。</p>
+                  <p><strong>青くハイライトされた遠くのマスをクリックすると、そこまで一気に移動</strong>することができます。</p>
                   <div className="border-l-2 border-emerald-500 pl-4 mt-2">
                     <strong className="text-emerald-400 block mb-1">【COOLING (冷却)】</strong>
                     未行動（緑ランプ点灯）かつ 熱が溜まっているコマを選択し、<strong>自分自身のマスをもう一度クリックする</strong>と、そのターンは動かずに「冷却」を行います。行動権を消費し、Heatが 1 下がります。
