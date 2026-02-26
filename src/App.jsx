@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Crown, Shield, Zap, Target, Terminal, AlertTriangle, Activity, Lock, Settings, HelpCircle, X, Flame, Crosshair, Eye } from 'lucide-react';
 
 const BOARD_SIZE = 9;
@@ -44,7 +44,6 @@ export default function App() {
   const [turnCount, setTurnCount] = useState(1);
   const [selectedId, setSelectedId] = useState(null);
   
-  // ログをオブジェクト配列に変更（アイコン対応）
   const [logs, setLogs] = useState([{ id: 'init', text: "SYSTEM_START: AWAITING INITIALIZATION...", type: 'system', icon: null, iconColor: '' }]);
   
   const [winner, setWinner] = useState(null);
@@ -206,6 +205,19 @@ export default function App() {
       osc2.frequency.setValueAtTime(50, now); osc2.frequency.exponentialRampToValueAtTime(10, now + 0.5);
       osc2.connect(gainNode); osc.start(now); osc.stop(now + 0.5); osc2.start(now); osc2.stop(now + 0.5);
     }
+    else if (type === 'turnend') {
+      // 軽快でサイバーな「ピロッ」というシステム承認音
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(1046, now); // C6
+      osc.frequency.setValueAtTime(1568, now + 0.08); // G6
+      
+      gainNode.gain.setValueAtTime(vol * 0.15, now);
+      gainNode.gain.linearRampToValueAtTime(0.01, now + 0.07);
+      gainNode.gain.setValueAtTime(vol * 0.15, now + 0.08);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+      
+      osc.start(now); osc.stop(now + 0.25);
+    }
     else if (type === 'win') {
       osc.type = 'square'; osc.frequency.setValueAtTime(440, now); osc.frequency.setValueAtTime(554, now + 0.15); 
       osc.frequency.setValueAtTime(659, now + 0.3); osc.frequency.setValueAtTime(880, now + 0.45); 
@@ -222,7 +234,6 @@ export default function App() {
   };
 
   // --- GAME FLOW CONTROLS ---
-
   const initAudioAndStartBGM = () => {
     if (!audioInitialized) {
       try {
@@ -308,6 +319,31 @@ export default function App() {
     return null;
   };
 
+  // BFSによる現在位置からの各マスへの最短距離計算（他ユニット・壁は障害物）
+  const getDistances = useCallback((startX, startY, currentUnits) => {
+    const dists = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(Infinity));
+    dists[startY][startX] = 0;
+    const queue = [{x: startX, y: startY, d: 0}];
+    
+    while(queue.length > 0) {
+        const {x, y, d} = queue.shift();
+        const dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+        for (let [dx, dy] of dirs) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE) {
+                if (isWall(nx, ny)) continue;
+                if (currentUnits.some(u => u.x === nx && u.y === ny)) continue;
+                if (d + 1 < dists[ny][nx]) {
+                    dists[ny][nx] = d + 1;
+                    queue.push({x: nx, y: ny, d: d + 1});
+                }
+            }
+        }
+    }
+    return dists;
+  }, []);
+
   const getAttackableCells = (unit, currentUnits) => {
     const cells = [];
     if (!unit) return cells;
@@ -331,7 +367,8 @@ export default function App() {
 
   const applyTurnStart = (currentUnits, owner) => currentUnits.map(u => (u.owner === owner ? { ...u, hasActed: false } : u));
 
-  const executeAction = (stateUnits, actorId, actionType, targetX, targetY) => {
+  // 一括移動に対応するため distance パラメータを追加
+  const executeAction = (stateUnits, actorId, actionType, targetX, targetY, distance = 1) => {
     let newUnits = [...stateUnits];
     let newVfx = [];
     let actionLogs = [];
@@ -344,11 +381,15 @@ export default function App() {
     const namePrefix = `[${actor.owner === 'player' ? 'P' : 'C'}] ${actor.label}`;
     const iconColor = actor.owner === 'player' ? 'text-cyan-400' : 'text-rose-500';
     
+    let deltaHeat = 0; // 追加される熱量
+
     if (actionType === 'move') {
       actor.x = targetX; actor.y = targetY;
-      actionLogs.push({ text: `${namePrefix} moved.`, type: 'move', icon: actor.icon, iconColor });
+      deltaHeat = !isOverclock ? distance - 1 : distance;
+      actionLogs.push({ text: `${namePrefix} moved ${distance} step(s).`, type: 'move', icon: actor.icon, iconColor });
       playSE('move');
     } else if (actionType === 'attack') {
+      deltaHeat = !isOverclock ? 0 : 1;
       const targetIndex = newUnits.findIndex(u => u.x === targetX && u.y === targetY);
       if (targetIndex !== -1) {
         let target = { ...newUnits[targetIndex] };
@@ -390,21 +431,22 @@ export default function App() {
           newVfx.push({ id: Date.now()+2, type: 'text', text: `-${damage}`, x: targetX, y: targetY, color: 'text-rose-400 font-bold text-2xl drop-shadow-[0_0_8px_#f43f5e]' });
         }
       }
-    } else if (actionType === 'cooling') {
-      actor.heat = Math.max(0, actor.heat - 1);
-      actionLogs.push({ text: `${namePrefix} COOLED DOWN (Heat -1).`, type: 'cool', icon: actor.icon, iconColor });
-      playSE('cooling');
-      newVfx.push({ id: Date.now(), type: 'text', text: 'COOL -1', x: actor.x, y: actor.y, color: 'text-emerald-400 font-bold drop-shadow-[0_0_8px_#34d399]' });
-    }
-
-    if (isOverclock && actionType !== 'cooling') {
-        actionLogs.push({ text: `${namePrefix} OVERCLOCKED (Heat +1).`, type: 'overclock', icon: actor.icon, iconColor });
-    }
-
-    if (!isOverclock) actor.hasActed = true; 
-    else if (actionType !== 'cooling') {
-        actor.heat += 1; 
-        newVfx.push({ id: Date.now()+2, type: 'text', text: 'HEAT UP!', x: actor.x, y: actor.y, color: 'text-orange-400 font-bold' });
+    } 
+    
+    // --- 行動による状態変化の適用 ---
+    if (actionType === 'cooling') {
+        actor.heat = Math.max(0, actor.heat - 1);
+        actionLogs.push({ text: `${namePrefix} COOLED DOWN (Heat -1).`, type: 'cool', icon: actor.icon, iconColor });
+        playSE('cooling');
+        newVfx.push({ id: Date.now(), type: 'text', text: 'COOL -1', x: actor.x, y: actor.y, color: 'text-emerald-400 font-bold drop-shadow-[0_0_8px_#34d399]' });
+        actor.hasActed = true;
+    } else {
+        if (deltaHeat > 0) {
+            actor.heat += deltaHeat;
+            actionLogs.push({ text: `${namePrefix} OVERCLOCKED (Heat +${deltaHeat}).`, type: 'overclock', icon: actor.icon, iconColor });
+            newVfx.push({ id: Date.now()+2, type: 'text', text: `HEAT +${deltaHeat}`, x: actor.x, y: actor.y, color: 'text-orange-400 font-bold' });
+        }
+        actor.hasActed = true;
     }
 
     newUnits[actorIndex] = actor;
@@ -435,6 +477,15 @@ export default function App() {
     return { newUnits: newUnits.filter(u => u.hp > 0), logs: actionLogs, hasMeltdown, generatedVfx: newVfx };
   };
 
+  // --- 選択中のユニットの広域移動マップを計算 ---
+  const movementMap = useMemo(() => {
+    if (selectedId && turn === 'player' && gameState === 'playing') {
+      const sel = units.find(u => u.id === selectedId);
+      if (sel) return getDistances(sel.x, sel.y, units);
+    }
+    return null;
+  }, [selectedId, turn, gameState, units, getDistances]);
+
   const handleCellClick = (x, y) => {
     if (gameState !== 'playing' || turn !== 'player' || isProcessing || isWall(x, y)) return;
 
@@ -448,6 +499,7 @@ export default function App() {
     const selectedUnit = units.find(u => u.id === selectedId);
     if (!selectedUnit) { setSelectedId(null); return; }
 
+    // 自分自身をクリックした場合は冷却
     if (selectedUnit.x === x && selectedUnit.y === y) {
       if (!selectedUnit.hasActed && selectedUnit.heat > 0) {
         const actionResult = executeAction(units, selectedId, 'cooling', x, y);
@@ -458,13 +510,24 @@ export default function App() {
       return;
     }
 
+    // 別の自分のユニットをクリックした場合は選択切り替え
     if (clickedUnit && clickedUnit.owner === 'player') {
       setSelectedId(clickedUnit.id); playSE('move'); return;
     }
 
     let actionResult = null;
     if (!clickedUnit) {
-      if (getDistance(selectedUnit.x, selectedUnit.y, x, y) === 1) actionResult = executeAction(units, selectedId, 'move', x, y);
+      // 一括移動処理
+      if (movementMap) {
+          const distance = movementMap[y][x];
+          if (distance > 0 && distance !== Infinity) {
+              const deltaHeat = !selectedUnit.hasActed ? distance - 1 : distance;
+              // 限界値+1（自爆するマス）までは移動可能とする。それ以上は途中で燃え尽きるため不可。
+              if (selectedUnit.heat + deltaHeat <= selectedUnit.maxHeat + 1) {
+                  actionResult = executeAction(units, selectedId, 'move', x, y, distance);
+              }
+          }
+      }
     } else if (clickedUnit.owner === 'cpu') {
       const attackables = getAttackableCells(selectedUnit, units);
       if (attackables.some(c => c.x === x && c.y === y)) actionResult = executeAction(units, selectedId, 'attack', x, y);
@@ -482,6 +545,7 @@ export default function App() {
 
   const endTurn = () => {
     if (gameState !== 'playing' || turn !== 'player' || isProcessing) return;
+    playSE('turnend'); 
     setSelectedId(null); setTurn('cpu');
     addLog(`=== TURN ${turnCount} END ===`, 'system');
   };
@@ -510,7 +574,6 @@ export default function App() {
             if (isOverclock) baseScore -= 40; 
             if (willMeltdown) baseScore -= (unit.id === 'c_core') ? 100000 : 100;
 
-            // 冷却判定
             if (!isOverclock && unit.heat > 0) {
               let coolingScore = (unit.heat >= unit.maxHeat) ? 80 : 10;
               if (cpuLevel >= 2) {
@@ -525,7 +588,6 @@ export default function App() {
               { x: unit.x, y: unit.y - 1 }, { x: unit.x, y: unit.y + 1 }, { x: unit.x - 1, y: unit.y }, { x: unit.x + 1, y: unit.y }
             ].filter(m => m.x >= 0 && m.x < BOARD_SIZE && m.y >= 0 && m.y < BOARD_SIZE && !isWall(m.x, m.y));
 
-            // 移動判定
             for (const m of moveCoords) {
               if (currentUnits.find(u => u.x === m.x && u.y === m.y)) continue; 
               let score = baseScore;
@@ -547,17 +609,15 @@ export default function App() {
                 if (distToCore < currentDist) score += 20; else score -= 10; 
               }
 
-              // ★ 難易度によるランダム性の追加 ★
               if (cpuLevel === 1) score += Math.random() * 200;
               else if (cpuLevel === 2) score += Math.random() * 30;
               else score += Math.random() * 5;
 
               if (score > bestScore && score > 0) {
-                bestScore = score; bestAction = { unitId: unit.id, type: 'move', x: m.x, y: m.y };
+                bestScore = score; bestAction = { unitId: unit.id, type: 'move', x: m.x, y: m.y, d: 1 };
               }
             }
 
-            // 攻撃判定
             const attackables = getAttackableCells(unit, currentUnits);
             for (const a of attackables) {
               const targetUnit = currentUnits.find(u => u.x === a.x && u.y === a.y);
@@ -608,7 +668,6 @@ export default function App() {
                   });
                 }
 
-                // ★ 難易度によるランダム性の追加 ★
                 if (cpuLevel === 1) score += Math.random() * 300;
                 else if (cpuLevel === 2) score += Math.random() * 40;
                 else score += Math.random() * 5;
@@ -622,7 +681,7 @@ export default function App() {
 
           if (!bestAction) break; 
 
-          const actionResult = executeAction(currentUnits, bestAction.unitId, bestAction.type, bestAction.x, bestAction.y);
+          const actionResult = executeAction(currentUnits, bestAction.unitId, bestAction.type, bestAction.x, bestAction.y, bestAction.d || 1);
           if (actionResult) {
             currentUnits = actionResult.newUnits;
             addLogs(actionResult.logs); setUnits([...currentUnits]);
@@ -659,29 +718,56 @@ export default function App() {
     const cellVfx = vfx.filter(v => v.x === x && v.y === y);
 
     let isTargetable = false; let isAttackable = false; let isCoolable = false; 
+    let movePathType = ''; // 'safe' | 'heat' | 'meltdown'
+    let attackPathType = '';
     
     if (selectedId && turn === 'player' && gameState === 'playing' && !isWallCell) {
       const selected = units.find(u => u.id === selectedId);
       if (selected) {
-        if (getDistance(selected.x, selected.y, x, y) === 1 && !unit) isTargetable = true;
-        const attackables = getAttackableCells(selected, units);
-        if (attackables.some(c => c.x === x && c.y === y) && unit && unit.owner === 'cpu') isAttackable = true;
+        // 冷却可能か
         if (selected.x === x && selected.y === y && !selected.hasActed && selected.heat > 0) isCoolable = true;
+
+        // 広域移動可能か（BFSで計算した距離マップを利用）
+        if (!unit && movementMap) {
+            const distance = movementMap[y][x];
+            if (distance > 0 && distance !== Infinity) {
+                const deltaHeat = !selected.hasActed ? distance - 1 : distance;
+                const futureHeat = selected.heat + deltaHeat;
+                
+                // 限界値+1（自爆する瞬間）までは到達可能。それ以上は途中で燃え尽きるため不可。
+                if (futureHeat <= selected.maxHeat + 1) {
+                    isTargetable = true;
+                    if (futureHeat === selected.maxHeat + 1) movePathType = 'meltdown';
+                    else if (deltaHeat > 0) movePathType = 'heat';
+                    else movePathType = 'safe';
+                }
+            }
+        }
+
+        // 攻撃可能か
+        if (unit && unit.owner === 'cpu') {
+            const attackables = getAttackableCells(selected, units);
+            if (attackables.some(c => c.x === x && c.y === y)) {
+                isAttackable = true;
+                const deltaHeat = !selected.hasActed ? 0 : 1;
+                const futureHeat = selected.heat + deltaHeat;
+                if (futureHeat > selected.maxHeat) attackPathType = 'meltdown';
+                else if (deltaHeat > 0) attackPathType = 'heat';
+                else attackPathType = 'safe';
+            }
+        }
       }
     }
 
-    let cellClass = "w-8 h-8 sm:w-12 sm:h-12 md:w-14 md:h-14 border border-slate-800/50 flex flex-col items-center justify-center relative cursor-pointer transition-colors";
+    // groupクラスを追加し、ホバー時の挙動を制御できるようにする
+    let cellClass = "group w-8 h-8 sm:w-12 sm:h-12 md:w-14 md:h-14 border border-slate-800/50 flex flex-col items-center justify-center relative cursor-pointer transition-colors";
     
     if (isWallCell) {
       return (
         <div key={`${x}-${y}`} className={`${cellClass} bg-amber-950/30 border-amber-500/50 overflow-hidden relative shadow-[inset_0_0_15px_rgba(245,158,11,0.3)]`}>
-          {/* デジタルバリケードのストライプ（オレンジを強調） */}
           <div className="absolute inset-0 opacity-30 bg-[repeating-linear-gradient(-45deg,transparent,transparent_4px,#f59e0b_4px,#f59e0b_8px)] animate-[pulse_4s_ease-in-out_infinite]" />
-          {/* 上下のシャドウで立体感を演出 */}
           <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/60" />
           <div className="absolute inset-[2px] border border-amber-400/30 rounded-sm pointer-events-none" />
-          
-          {/* 中央の警告ロックアイコン */}
           <div className="relative z-10 flex items-center justify-center w-full h-full">
              <div className="border border-amber-500/80 p-[3px] bg-black/80 rounded-sm flex items-center justify-center shadow-[0_0_10px_rgba(245,158,11,0.5)]">
                 <Lock size={12} className="text-amber-400 drop-shadow-[0_0_5px_#f59e0b]" />
@@ -691,14 +777,35 @@ export default function App() {
       );
     }
 
+    // ハイライトの色分け処理
     if (isSelected && isCoolable) cellClass += " bg-emerald-900/40 border-emerald-500 shadow-[inset_0_0_10px_rgba(16,185,129,0.5)]";
     else if (isSelected) cellClass += " bg-cyan-900/40 border-cyan-400 shadow-[inset_0_0_10px_rgba(34,211,238,0.5)]";
-    else if (isAttackable) cellClass += " bg-rose-900/30 border-rose-500 hover:bg-rose-800/50";
-    else if (isTargetable) cellClass += " bg-cyan-900/20 hover:bg-cyan-800/40 border-cyan-700 hover:border-cyan-400";
+    else if (isAttackable) {
+        if (attackPathType === 'meltdown') {
+            cellClass += " bg-red-950/40 border-red-800/50 hover:bg-red-900/80 hover:border-red-500 hover:shadow-[inset_0_0_15px_rgba(239,68,68,0.8)]";
+        }
+        else if (attackPathType === 'heat') cellClass += " bg-amber-900/60 border-amber-500 hover:bg-amber-800/80 shadow-[inset_0_0_10px_rgba(245,158,11,0.5)]";
+        else cellClass += " bg-rose-900/30 border-rose-500 hover:bg-rose-800/50";
+    }
+    else if (isTargetable) {
+        if (movePathType === 'meltdown') {
+            // 普段は非常に薄く見えなくしておき、カーソルを合わせた時だけ強烈に警告する
+            cellClass += " bg-slate-900/10 border-slate-700/30 hover:bg-red-950/80 hover:border-red-500 hover:shadow-[inset_0_0_15px_rgba(239,68,68,0.8)] transition-all duration-200";
+        }
+        else if (movePathType === 'heat') cellClass += " bg-amber-900/40 border-amber-500 hover:bg-amber-800/60 shadow-[inset_0_0_10px_rgba(245,158,11,0.5)]";
+        else cellClass += " bg-cyan-900/20 hover:bg-cyan-800/40 border-cyan-700 hover:border-cyan-400";
+    }
     else cellClass += " bg-slate-900/30 hover:bg-slate-800/50";
 
     return (
       <div key={`${x}-${y}`} className={cellClass} onClick={() => handleCellClick(x, y)}>
+        {/* ホバー時のメルトダウン警告（自爆するマスにカーソルを合わせた時のみ表示） */}
+        {((isTargetable && movePathType === 'meltdown') || (isAttackable && attackPathType === 'meltdown')) && (
+            <div className="absolute inset-0 hidden group-hover:flex items-center justify-center z-30 bg-red-900/40 pointer-events-none rounded">
+                <Flame className="text-red-500 animate-pulse drop-shadow-[0_0_8px_rgba(239,68,68,1)]" size={24} />
+            </div>
+        )}
+
         {cellVfx.map(v => {
           if (v.type === 'text') {
             return (<div key={v.id} className={`absolute z-50 pointer-events-none animate-[slideUpFade_1s_ease-out_forwards] ${v.color}`}>{v.text}</div>);
@@ -715,25 +822,27 @@ export default function App() {
         {unit && Icon && (
           <div className={`flex flex-col items-center justify-center w-full h-full transition-all duration-300 ${
             unit.owner === 'player' ? 'text-cyan-400 drop-shadow-[0_0_5px_rgba(34,211,238,0.8)]' : 'text-rose-500 drop-shadow-[0_0_5px_rgba(244,63,94,0.8)]'
-          } ${unit.hasActed ? 'opacity-40 scale-95' : 'opacity-100 scale-100 hover:scale-110'}`}>
+          } ${unit.hasActed ? 'scale-95' : 'scale-100 hover:scale-110'}`}>
             
             {!unit.hasActed && unit.owner === turn && gameState === 'playing' && (
               <div className="absolute top-1 left-1 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_5px_#34d399]" />
             )}
 
-            <Icon size={20} className="sm:w-7 sm:h-7" />
+            {/* アイコンのみを半透明に */}
+            <Icon size={20} className={`sm:w-7 sm:h-7 ${unit.hasActed ? 'opacity-40' : 'opacity-100'}`} />
             
-            <div className="absolute top-0 right-0.5 flex gap-[1px]">
+            {/* HPゲージは常にくっきりと表示し、黒い座布団を敷く */}
+            <div className="absolute top-0 right-0.5 flex gap-[1px] bg-slate-900/80 p-[1px] rounded-bl">
                 {Array.from({length: unit.maxHp}).map((_, i) => (
-                    <div key={`hp-${i}`} className={`w-1.5 sm:w-2 h-1 ${i < unit.hp ? (unit.owner === 'player' ? 'bg-cyan-400' : 'bg-rose-500') : 'bg-slate-700'}`} />
+                    <div key={`hp-${i}`} className={`w-1.5 sm:w-2 h-1.5 ${i < unit.hp ? (unit.owner === 'player' ? 'bg-cyan-400 shadow-[0_0_2px_#22d3ee]' : 'bg-rose-500 shadow-[0_0_2px_#f43f5e]') : 'bg-slate-700'}`} />
                 ))}
             </div>
 
-            <div className="absolute bottom-0 w-full px-1 flex gap-[1px]">
+            {/* 熱ゲージも常にくっきりと表示し、太くする */}
+            <div className="absolute bottom-0 w-full px-1 flex gap-[1px] bg-slate-900/80 p-[1px]">
                 {Array.from({length: unit.maxHeat + 1}).map((_, i) => {
-                    let bg = "bg-slate-700";
-                    if (i < unit.heat) bg = i >= unit.maxHeat ? "bg-amber-400" : "bg-orange-500";
-                    return <div key={`heat-${i}`} className={`flex-1 h-1 ${bg} ${i === unit.maxHeat ? 'border-l border-amber-300' : ''}`} />
+                    const bg = i < unit.heat ? "bg-orange-500 shadow-[0_0_2px_#f97316]" : "bg-slate-700";
+                    return <div key={`heat-${i}`} className={`flex-1 h-1.5 ${bg}`} />
                 })}
             </div>
             
@@ -829,12 +938,12 @@ export default function App() {
               </div>
             </div>
 
-            <div>
-              <button
-                onClick={(e) => { e.stopPropagation(); restartGame(); }}
-                className="text-lg px-10 py-4 bg-slate-950 border border-current rounded hover:bg-slate-800 transition-colors tracking-widest font-bold z-50 relative"
-              >
-                REBOOT SYSTEM
+            <div className="flex flex-col sm:flex-row gap-6 justify-center items-center">
+              <button onClick={(e) => handleStart(e, cpuLevel)} className="w-full sm:w-auto px-10 py-5 bg-transparent border-2 border-white text-white font-black tracking-[0.2em] rounded-full hover:bg-white hover:text-black transition-all transform hover:scale-105">
+                  RETRY (LV {cpuLevel})
+              </button>
+              <button onClick={handleReturnToTitle} className="w-full sm:w-auto px-10 py-5 bg-transparent border-2 border-cyan-500 text-cyan-400 font-black tracking-[0.2em] rounded-full hover:bg-cyan-500 hover:text-slate-950 transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] transform hover:scale-105">
+                  CHANGE LEVEL
               </button>
             </div>
           </div>
@@ -872,7 +981,6 @@ export default function App() {
               <span>PLAYER</span>
             </div>
             
-            {/* ターン数の表示を追加 */}
             <div className="flex flex-col items-center mx-2">
                <span className="text-xl sm:text-2xl font-black tracking-widest text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">
                   TURN {turnCount}
@@ -906,15 +1014,16 @@ export default function App() {
 
           {/* Action Bar */}
           <div className="mt-6 w-full flex flex-col sm:flex-row justify-between items-center gap-4 bg-[#0f172a]/80 p-4 rounded-xl border border-slate-800 backdrop-blur">
-            <div className="text-xs text-slate-400 font-mono text-center sm:text-left leading-relaxed">
-              <span className="text-emerald-400 font-bold">1. 緑ランプ</span>: 通常行動 (移動/攻撃/熱があれば自身クリックで冷却)<br/>
+            <div className="text-[10px] sm:text-xs text-slate-400 font-mono text-center sm:text-left leading-relaxed">
+              <span className="text-emerald-400 font-bold">1. 緑ランプ</span>: 通常行動 (移動/攻撃/自身クリックで冷却)<br/>
               <span className="text-amber-500 font-bold">2. OVERCLOCK</span>: 行動済みコマの再行動(Heat🔥+1)<br/>
-              <span className="text-rose-500 font-bold">3. MELTDOWN</span>: Heat限界突破で自爆(周囲に1DMG)
+              <span className="text-rose-500 font-bold">3. MELTDOWN</span>: Heat限界突破で自爆(周囲に1DMG)<br/>
+              <span className="text-cyan-400 font-bold">【青枠】</span>: 安全な移動範囲 / <span className="text-amber-500 font-bold">【黄枠】</span>: Heat上昇範囲 / <span className="text-red-500 font-bold">【炎アイコン】</span>: メルトダウン
             </div>
             <button
               onClick={(e) => { e.stopPropagation(); endTurn(); }}
               disabled={gameState !== 'playing' || turn !== 'player' || isProcessing}
-              className={`px-8 py-3 rounded text-sm font-bold tracking-widest transition-all whitespace-nowrap overflow-hidden relative group z-50 ${
+              className={`px-8 py-4 rounded-lg text-sm font-bold tracking-widest transition-all whitespace-nowrap overflow-hidden relative group z-50 ${
                 gameState === 'playing' && turn === 'player' && !isProcessing
                   ? 'bg-cyan-950 border border-cyan-500 text-cyan-400 hover:bg-cyan-900 shadow-[0_0_15px_rgba(6,182,212,0.3)]' 
                   : 'bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed'
@@ -941,6 +1050,10 @@ export default function App() {
                 <div><p className="font-bold text-slate-200">HACKER <span className="text-slate-500 font-normal ml-1">HP:1/ATK:0/Heat:2</span></p><p className="text-[10px] text-amber-400/80 mt-0.5">Forces target Heat +2</p></div>
               </li>
               <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50">
+                <div className="text-cyan-400 mt-0.5"><Shield size={16}/></div>
+                <div><p className="font-bold text-slate-200">HEAVY <span className="text-slate-500 font-normal ml-1">HP:2/ATK:2/Heat:1</span></p></div>
+              </li>
+              <li className="flex gap-3 items-start bg-slate-900/50 p-2 rounded border border-slate-800/50">
                 <div className="text-cyan-400 mt-0.5"><Zap size={16}/></div>
                 <div><p className="font-bold text-slate-200">SPEED <span className="text-slate-500 font-normal ml-1">HP:1/ATK:1/Heat:3</span></p></div>
               </li>
@@ -951,7 +1064,7 @@ export default function App() {
             </ul>
           </div>
 
-          {/* Casualties (破壊されたユニット) */}
+          {/* Casualties */}
           <div className="bg-[#0f172a]/80 border border-slate-800 rounded-xl p-4 backdrop-blur shadow-lg">
              <h3 className="text-slate-500 font-bold mb-3 border-b border-slate-700/50 pb-2 flex items-center justify-between text-xs tracking-widest">
                <span>☠️ CASUALTIES</span>
@@ -966,8 +1079,10 @@ export default function App() {
              </div>
           </div>
 
-          <div className="flex-1 min-h-[250px] bg-[#0a0f18] border border-slate-800 rounded-xl p-4 font-mono text-xs overflow-hidden flex flex-col relative shadow-[inset_0_0_20px_rgba(0,0,0,0.5)]">
-            <div className="text-cyan-600 font-bold mb-3 pb-2 border-b border-cyan-900/30 flex items-center justify-between sticky top-0 bg-[#0a0f18] z-10 tracking-widest">
+          {/* System Log */}
+          {/* 高さを固定(h-64 md:h-[28rem])し、親要素に合わせて伸びないよう(shrink-0)にしてスクロールを有効化 */}
+          <div className="h-64 md:h-[28rem] shrink-0 bg-[#0a0f18] border border-slate-800 rounded-xl p-4 font-mono text-xs overflow-hidden flex flex-col relative shadow-[inset_0_0_20px_rgba(0,0,0,0.5)]">
+            <div className="text-cyan-600 font-bold mb-3 pb-2 border-b border-cyan-900/30 flex items-center justify-between shrink-0 z-10 tracking-widest">
               <span>&gt;_ SYSTEM_LOG</span>
             </div>
             <div className="flex-1 overflow-y-auto space-y-2 scrollbar-thin scrollbar-thumb-cyan-900/50 scrollbar-track-transparent pr-2 pt-1">
@@ -1046,56 +1161,68 @@ export default function App() {
       {/* --- Help Modal --- */}
       {showHelp && (
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[300] p-4 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-          <div className="bg-slate-900 border border-cyan-500 rounded-2xl p-8 max-w-2xl w-full relative">
-            <button onClick={() => setShowHelp(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X size={24} /></button>
-            <h2 className="text-3xl font-black text-cyan-400 mb-8 border-b border-slate-800 pb-4 tracking-tighter">TACTICAL_MANUAL</h2>
-            <div className="space-y-6 text-slate-300 text-sm leading-relaxed font-mono">
+          <div className="bg-slate-900 border border-cyan-500 rounded-2xl p-6 max-w-2xl w-full h-[80vh] overflow-y-auto shadow-[0_0_50px_rgba(6,182,212,0.2)] relative scrollbar-thin scrollbar-thumb-cyan-900">
+            <button onClick={() => setShowHelp(false)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors">
+              <X size={24} />
+            </button>
+            <h2 className="text-2xl font-bold text-cyan-400 mb-8 flex items-center gap-3 tracking-widest border-b border-slate-800 pb-4">
+              <HelpCircle size={24}/> TACTICAL MANUAL
+            </h2>
+            
+            <div className="space-y-8 text-slate-300 leading-relaxed text-sm sm:text-base">
               <section>
-                <h4 className="text-white font-bold mb-2">01_ OBJECTIVE</h4>
-                <p>敵陣の機体群を突破し、相手のリーダー機「CORE」のHPを0にすれば勝利。自分のCOREを失えば即座に作戦失敗（敗北）となる。</p>
+                <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                  <span className="text-cyan-500">01.</span> VICTORY CONDITION
+                </h3>
+                <p className="bg-slate-950 p-4 rounded border border-slate-800">
+                  相手の<strong className="text-cyan-400">CORE（王）</strong>のHPを0にすれば勝利です。自分のCOREが破壊されると敗北します。
+                </p>
               </section>
+              
               <section>
-                <h4 className="text-emerald-400 font-bold mb-2">02_ COOLING_SYSTEM</h4>
-                <p>各機体は1ターンに1回、安全に行動（移動または攻撃）できる。未行動の機体を自身でクリックすると「冷却」を行い、蓄積されたHeatを1減少させることが可能。</p>
+                <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                  <span className="text-cyan-500">02.</span> BASIC ACTIONS
+                </h3>
+                <div className="bg-slate-950 p-4 rounded border border-slate-800 space-y-3">
+                  <p>自分のターン中、<strong className="text-emerald-400">各ユニットは1回ずつ</strong>安全に行動（移動 または 攻撃）することができます。</p>
+                  <p>まだ行動していないユニットには、左上に<strong className="text-emerald-400">緑色のランプ</strong>が点灯します。</p>
+                  <p>★ 今回のアップデートにより、<strong>青くハイライトされた遠くのマスをクリックして一気に移動</strong>できるようになりました。</p>
+                  <div className="border-l-2 border-emerald-500 pl-4 mt-2">
+                    <strong className="text-emerald-400 block mb-1">【COOLING (冷却)】</strong>
+                    未行動（緑ランプ点灯）かつ 熱が溜まっているコマを選択し、<strong>自分自身のマスをもう一度クリックする</strong>と、そのターンは動かずに「冷却」を行います。行動権を消費し、Heatが 1 下がります。
+                  </div>
+                </div>
               </section>
+
               <section>
-                <h4 className="text-amber-500 font-bold mb-2">03_ OVERCLOCK_RISK</h4>
-                <p>行動済みの機体を無理やり再行動させる「オーバークロック」が可能。代償としてHeatが1上昇し、限界値を超えた瞬間に機体は「メルトダウン（自爆）」を起こし、周囲十字4マスにダメージを撒き散らして消滅する。</p>
+                <h3 className="text-lg font-bold text-amber-400 mb-3 flex items-center gap-2">
+                  <span className="text-amber-500">03.</span> OVERCLOCK & MELTDOWN
+                </h3>
+                <div className="bg-slate-950 p-4 rounded border border-slate-800 border-l-amber-500 space-y-3">
+                  <p>「すでに1回行動したユニット」を選択し、さらに行動させることも可能です。これが<strong className="text-amber-400">「OVERCLOCK」</strong>です。</p>
+                  <ul className="list-disc pl-5 space-y-2 marker:text-amber-500">
+                    <li>オーバークロックで行動すると、そのユニットの <strong className="text-orange-500">Heat（熱ゲージ）</strong> が 1 上昇します。（遠くまで一気に移動した場合は、距離に応じてHeatがまとめて上昇します）</li>
+                    <li>Heatが「MaxHeat（限界値）」を超えた瞬間、そのユニットは<strong className="text-red-500 font-bold">メルトダウン（自爆）</strong>します！</li>
+                    <li>自爆したユニットは消滅し、<strong>周囲十字4マスにいる全てのユニット（味方含む）に 1 ダメージ（貫通）</strong>を与えます。</li>
+                  </ul>
+                </div>
               </section>
+              
               <section>
-                <h4 className="text-fuchsia-400 font-bold mb-2">04_ HACKER UNIT</h4>
-                <p>「HACKER (ハッカー)」は物理ダメージを与えない代わりに、攻撃対象の<strong className="text-orange-500">Heatを強制的に +2</strong> させる。すでに熱が溜まっている機体を狙うことで、<strong>強制的にメルトダウン（誘爆）を引き起こす</strong>恐ろしいユニットだ。</p>
+                <h4 className="text-sky-400 font-bold mb-3 border-t border-slate-700 pt-4">04_ UNIT TYPES</h4>
+                <ul className="space-y-3">
+                  <li className="flex items-start gap-3"><Crown className="text-cyan-400 shrink-0"/> <div><strong>CORE (王)</strong>: 高い耐久力と熱限界を持つ。倒されると敗北。</div></li>
+                  <li className="flex items-start gap-3"><Shield className="text-cyan-400 shrink-0"/> <div><strong>HEAVY (盾)</strong>: 攻撃力2の強力な一撃を持つが、熱限界が「1」しかないため、オーバークロックするとすぐに自爆してしまう。</div></li>
+                  <li className="flex items-start gap-3"><Zap className="text-cyan-400 shrink-0"/> <div><strong>SPEED (雷)</strong>: 攻撃力は低いが、熱限界が「3」もあるため、1ターンの間に何度も安全にオーバークロックして遠くまで移動できる。</div></li>
+                  <li className="flex items-start gap-3"><Target className="text-cyan-400 shrink-0"/> <div><strong>SNIPER (的)</strong>: 2〜3マス先の遠距離から一方的に攻撃できる。</div></li>
+                  <li className="flex items-start gap-3"><Eye className="text-cyan-400 shrink-0"/> <div><strong>HACKER (眼)</strong>: ダメージを与えない代わりに、相手の熱を+2し、強制メルトダウンを誘発する。</div></li>
+                </ul>
               </section>
             </div>
           </div>
         </div>
       )}
 
-      {/* --- 結果画面 --- */}
-      {winner && (
-        <div className="fixed inset-0 bg-slate-950/95 z-[400] flex items-center justify-center p-4 animate-in fade-in duration-700">
-            <div className={`text-center p-10 sm:p-16 rounded-[3rem] border-8 shadow-[0_0_150px_rgba(0,0,0,1)] ${winner === 'player' ? 'border-cyan-400 bg-cyan-950/20' : 'border-rose-600 bg-rose-950/20'}`}>
-                <p className="text-slate-500 font-mono tracking-[0.5em] mb-4">MISSION_COMPLETE</p>
-                <h2 className={`text-7xl sm:text-9xl font-black mb-12 italic ${winner === 'player' ? 'text-cyan-400 drop-shadow-[0_0_30px_#22d3ee]' : 'text-rose-500 drop-shadow-[0_0_30px_#f43f5e]'}`}>{winner === 'player' ? 'VICTORY' : 'DEFEAT'}</h2>
-                
-                <div className="flex flex-col sm:flex-row gap-6 justify-center items-center">
-                    <button onClick={(e) => handleStart(e, cpuLevel)} className="w-full sm:w-auto px-10 py-5 bg-transparent border-2 border-white text-white font-black tracking-[0.2em] rounded-full hover:bg-white hover:text-black transition-all transform hover:scale-105">
-                        RETRY (LV {cpuLevel})
-                    </button>
-                    <button onClick={handleReturnToTitle} className="w-full sm:w-auto px-10 py-5 bg-transparent border-2 border-cyan-500 text-cyan-400 font-black tracking-[0.2em] rounded-full hover:bg-cyan-500 hover:text-slate-950 transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] transform hover:scale-105">
-                        CHANGE LEVEL
-                    </button>
-                </div>
-            </div>
-        </div>
-      )}
-
-      <style dangerouslySetInnerHTML={{__html:`
-        @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
-        .scrollbar-thin::-webkit-scrollbar { width: 4px; }
-        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-        .scrollbar-thin::-webkit-scrollbar-thumb { background: #083344; border-radius: 2px; }
-      `}}/>
     </div>
   );
 }
